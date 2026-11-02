@@ -1,0 +1,27 @@
+{
+  "meshtastic": {
+    "connection": "serial",
+    "serial_port": null,
+    "tcp_host": "localhost",
+    "channel_index": 0
+  },
+  "gps": {
+    "gpsd_host": "127.0.0.1",
+    "gpsd_port": 2947,
+    "timeout_seconds": 15
+  },
+  "location": {
+    "latitude": null,
+    "longitude": null
+  },
+  "noaa": {
+    "api_key": "",
+    "user_agent": "OZO-Meshtastic-Time-and-Weather (you@example.com)",
+    "timeout_seconds": 20
+  },
+  "schedule": {
+    "interval_minutes": 60,
+    "times": []
+  },
+  "time_zone": "UTC"
+}

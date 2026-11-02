@@ -1,0 +1,19 @@
+[Unit]
+Description=OZO Meshtastic Time and Weather broadcaster
+After=network-online.target gpsd.service
+Wants=network-online.target gpsd.service
+
+[Service]
+Type=simple
+User=ozo-meshtastic
+Group=dialout
+WorkingDirectory=/opt/ozo-meshtastic-tw
+ExecStart=/opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

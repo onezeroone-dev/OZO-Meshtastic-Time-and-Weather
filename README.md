@@ -1,7 +1,7 @@
 # OZO Meshtastic Time and Weather
 
 ## Description
-Service for Raspberry Pi OS with an SX1262 LoRa/GNSS HAT such as [this module expansion board for Raspberry Pi](https://www.amazon.com/dp/B0D4DPB68J) (non-sponsored). It reads the
+Service for Raspberry Pi OS with an SX1262 LoRa/GNSS HAT such as [this module expansion board for Raspberry Pi](https://www.amazon.com/dp/B0D4DPB68J) (non-sponsored link). It reads the
 current time from GPS (via `gpsd`), fetches local weather from the NOAA/NWS API
 (`api.weather.gov`), and broadcasts both on the local Meshtastic mesh on a schedule.
 

@@ -2,7 +2,7 @@
 /Include/
 /Lib/
 /Scripts/
-pyvenv.cfg
+/pyvenv.cfg
 __pycache__/
 *.pyc
 config.json

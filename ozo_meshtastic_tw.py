@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-NOAA_API = "https://api.weather.gov"
 MAX_MESSAGE_BYTES = 200
 log = logging.getLogger("ozo-meshtastic-tw")
 
@@ -60,7 +59,8 @@ def get_weather(lat, lon, noaa):
     if noaa.get("api_key"):
         headers["X-Api-Key"] = noaa["api_key"]
     timeout = noaa.get("timeout_seconds", 20)
-    point = requests.get(f"{NOAA_API}/points/{lat:.4f},{lon:.4f}", headers=headers, timeout=timeout)
+    api_url = noaa.get("api_url", "https://api.weather.gov").rstrip("/")
+    point = requests.get(f"{api_url}/points/{lat:.4f},{lon:.4f}", headers=headers, timeout=timeout)
     point.raise_for_status()
     url = point.json()["properties"]["forecastHourly"]
     fc = requests.get(url, headers=headers, timeout=timeout)

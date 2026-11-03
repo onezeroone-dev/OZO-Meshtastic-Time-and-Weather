@@ -15,6 +15,7 @@
     "longitude": null
   },
   "noaa": {
+    "api_url": "https://api.weather.gov",
     "api_key": "",
     "user_agent": "OZO-Meshtastic-Time-and-Weather (you@example.com)",
     "timeout_seconds": 20

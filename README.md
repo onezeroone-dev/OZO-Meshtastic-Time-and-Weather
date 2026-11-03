@@ -9,7 +9,7 @@ Copy `config.example.json` to `config.json`:
 - `meshtastic`: `connection` (`serial` or `tcp` for `meshtasticd`), `serial_port` (null = autodetect), `tcp_host`, `channel_index`.
 - `gps`: gpsd host/port and fix timeout.
 - `location`: optional fixed latitude/longitude; if null, the GPS position is used.
-- `noaa`: `user_agent` (NOAA asks for a contact string) and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
+- `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `schedule`: `times` (list of local `HH:MM`) or, if empty, `interval_minutes`.
 - `time_zone`: IANA zone for the displayed time.
 

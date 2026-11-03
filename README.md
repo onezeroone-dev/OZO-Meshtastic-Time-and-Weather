@@ -19,5 +19,6 @@ Copy `config.example.json` to `config.json`:
 
 ## Install as a service
     sudo ./install.sh
+The installer first runs `check_radios.py` as the service user and aborts (without installing the service) if gpsd cannot supply a GPS fix/time or the Meshtastic radio cannot be reached. It uses `/etc/ozo-meshtastic-tw/config.json` (created from the example if absent), so a non-default serial port or gpsd host must be set there first; re-run the installer after fixing any problem. You can run the check on its own with `venv/bin/python check_radios.py --config config.json`.
 Edit `/etc/ozo-meshtastic-tw/config.json`, then `sudo systemctl start ozo-meshtastic-tw`.
 Logs: `journalctl -u ozo-meshtastic-tw`. The unit file is `systemd/ozo-meshtastic-tw.service`.

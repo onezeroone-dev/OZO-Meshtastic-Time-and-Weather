@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-MAX_MESSAGE_BYTES = 200
 log = logging.getLogger("ozo-meshtastic-tw")
 
 
@@ -68,7 +67,7 @@ def get_weather(lat, lon, noaa):
     return fc.json()["properties"]["periods"][0]
 
 
-def build_message(now, weather, tz):
+def build_message(now, weather, tz, max_bytes=200):
     local = now.astimezone(tz)
     msg = f"{local:%Y-%m-%d %H:%M} {local.tzname()}"
     if weather:
@@ -76,7 +75,7 @@ def build_message(now, weather, tz):
                 f"{weather['temperatureUnit']}, wind {weather['windSpeed']} {weather['windDirection']}")
     else:
         msg += " | weather unavailable"
-    return msg.encode("utf-8")[:MAX_MESSAGE_BYTES].decode("utf-8", "ignore")
+    return msg.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
 
 
 def next_run(sched, now, tz):
@@ -116,10 +115,11 @@ def broadcast_once(cfg, tz):
         weather = get_weather(lat, lon, cfg.get("noaa", {}))
     except Exception as exc:
         log.warning("weather lookup failed: %s", exc)
-    text = build_message(now, weather, tz)
-    iface = open_interface(cfg.get("meshtastic", {}))
+    mcfg = cfg.get("meshtastic", {})
+    text = build_message(now, weather, tz, mcfg.get("max_message_bytes", 200))
+    iface = open_interface(mcfg)
     try:
-        iface.sendText(text, channelIndex=cfg.get("meshtastic", {}).get("channel_index", 0))
+        iface.sendText(text, channelIndex=mcfg.get("channel_index", 0))
     finally:
         iface.close()
     log.info("broadcast: %s", text)

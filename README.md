@@ -6,7 +6,7 @@ current time from GPS (via `gpsd`), fetches local weather from the NOAA/NWS API
 
 ## Configuration
 Copy `config.example.json` to `config.json`:
-- `meshtastic`: `connection` (`serial` or `tcp` for `meshtasticd`), `serial_port` (null = autodetect), `tcp_host`, `channel_index`.
+- `meshtastic`: `connection` (`serial` or `tcp` for `meshtasticd`), `serial_port` (null = autodetect), `tcp_host`, `channel_index`, `max_message_bytes` (message is truncated to this many UTF-8 bytes; default 200).
 - `gps`: gpsd host/port and fix timeout.
 - `location`: optional fixed latitude/longitude; if null, the GPS position is used.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).

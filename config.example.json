@@ -3,7 +3,8 @@
     "connection": "serial",
     "serial_port": null,
     "tcp_host": "localhost",
-    "channel_index": 0
+    "channel_index": 0,
+    "max_message_bytes": 200
   },
   "gps": {
     "gpsd_host": "127.0.0.1",

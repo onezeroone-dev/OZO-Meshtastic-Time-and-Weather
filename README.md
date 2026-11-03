@@ -1,7 +1,7 @@
 # OZO Meshtastic Time and Weather
 
 ## Description
-Service for Raspberry Pi OS (32-bit, Debian Trixie) with an SX1262 LoRa/GNSS HAT such as [this module expansion board for Raspberry Pi](https://www.amazon.com/dp/B0D4DPB68J) (non-sponsored). It reads the
+Service for Raspberry Pi OS with an SX1262 LoRa/GNSS HAT such as [this module expansion board for Raspberry Pi](https://www.amazon.com/dp/B0D4DPB68J) (non-sponsored). It reads the
 current time from GPS (via `gpsd`), fetches local weather from the NOAA/NWS API
 (`api.weather.gov`), and broadcasts both on the local Meshtastic mesh on a schedule.
 
@@ -9,7 +9,7 @@ current time from GPS (via `gpsd`), fetches local weather from the NOAA/NWS API
 
 **Region.** Weather and alerts come from the NOAA/NWS API, which covers the United States and its territories only. Elsewhere the weather fields are unavailable; the time, sun and moon fields still work.
 
-**Tested hardware.** This project has been tested only with the SX1262 LoRa/GNSS HAT linked above, on a Raspberry Pi running 32-bit Raspberry Pi OS (Debian Trixie). Other hardware that meets the compatibility requirements should work but has not been verified; reports are welcome.
+**Tested hardware.** This project has been tested only with the SX1262 LoRa/GNSS HAT linked above, on a Raspberry Pi Zero W v1.1 running 32-bit Raspberry Pi OS (Debian Trixie). Other hardware that meets the compatibility requirements should work but has not been verified; reports are welcome.
 
 Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
 

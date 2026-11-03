@@ -10,10 +10,17 @@ Copy `config.example.json` to `config.json`:
 - `gps`: gpsd host/port and fix timeout.
 - `location`: optional fixed latitude/longitude; if null, the GPS position is used.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
+- `message`: controls the broadcast content.
+  - `fields`: ordered list of parts to include (remove or reorder to taste). Valid names: `time`, `time_sync` (shows "GPS time" when the time comes from the GPS), `conditions` (current forecast hour: sky, temperature, wind), `precip` (chance of precipitation), `high_low` (high and low from the daily forecast; after the day's high period has passed this may be tomorrow's), `observation` (latest station observation: temperature, humidity, wind, pressure in hPa with a rising/falling trend when available), `outlook` (next forecast period), `sun` (sunrise and sunset), `moon` (phase and percent illuminated), `next_broadcast` (local time of the next scheduled broadcast; omitted with `--once`).
+  - `alerts`: `separate` (default; active NWS alerts are sent as their own second message), `inline` (alert text goes at the front of the main message), or `off`.
+  - `compact`: `true` (default) uses abbreviations to save bytes; `false` uses full words.
+  - Parts are added in the listed order as whole units; any part that would exceed `meshtastic.max_message_bytes` is skipped, so the message is never cut mid-field. Sun and moon values are calculated locally. Weather values are in US units (°F, mph). Each NWS lookup fails independently, so a partial outage still yields a partial message. Only the lookups needed by the chosen fields are made.
 - `schedule`: `times` (list of local `HH:MM`) or, if empty, `interval_minutes`.
 - `time_zone`: IANA zone for the displayed time, e.g. `America/Denver` (see the [list of tz database time zones](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for valid names).
 
 ## Run manually (venv)
+
+To preview what would be broadcast without transmitting, run `python ozo_meshtastic_tw.py --dry-run` from an interactive terminal. It ignores the schedule, builds the message(s) now, and prints each with its byte count. It never opens the LoRa radio. If gpsd is unreachable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). It refuses to run when not attached to a terminal and cannot be combined with `--once`.
     python3 -m venv venv && venv/bin/pip install -r requirements.txt
     venv/bin/python ozo_meshtastic_tw.py --config config.json --once
 

@@ -21,6 +21,22 @@
     "user_agent": "OZO-Meshtastic-Time-and-Weather (you@example.com)",
     "timeout_seconds": 20
   },
+  "message": {
+    "fields": [
+      "time",
+      "time_sync",
+      "conditions",
+      "precip",
+      "high_low",
+      "observation",
+      "outlook",
+      "sun",
+      "moon",
+      "next_broadcast"
+    ],
+    "alerts": "separate",
+    "compact": true
+  },
   "schedule": {
     "interval_minutes": 60,
     "times": []

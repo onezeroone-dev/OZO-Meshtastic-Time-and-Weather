@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import math
+import os
 import re
 import socket
 import sys
@@ -28,7 +29,68 @@ def load_config(path):
         raise ValueError(f"unknown message field(s) {unknown}; valid: {list(FIELD_DATA)}")
     if msg.get("alerts", "separate") not in ALERT_MODES:
         raise ValueError(f"message.alerts must be one of {list(ALERT_MODES)}")
+    flt = msg.get("alert_filter", {})
+    if flt.get("min_severity", "Minor") not in SEVERITIES:
+        raise ValueError(f"message.alert_filter.min_severity must be one of {list(SEVERITIES)}")
+    for key in ("include", "exclude"):
+        if not isinstance(flt.get(key, []), list):
+            raise ValueError(f"message.alert_filter.{key} must be a list of NWS event names")
+    quiet = cfg.get("quiet_hours")
+    if quiet:
+        for key in ("start", "end"):
+            try:
+                _parse_hhmm(quiet[key])
+            except (KeyError, ValueError, AttributeError) as exc:
+                raise ValueError(f"quiet_hours.{key} must be HH:MM") from exc
+        if quiet.get("mode", "skip") not in QUIET_MODES:
+            raise ValueError(f"quiet_hours.mode must be one of {list(QUIET_MODES)}")
+    retry = cfg.get("retry", {})
+    if int(retry.get("attempts", 3)) < 1 or float(retry.get("delay_seconds", 5)) < 0:
+        raise ValueError("retry.attempts must be >= 1 and retry.delay_seconds >= 0")
     return cfg
+
+
+def _parse_hhmm(text):
+    hh, mm = (int(x) for x in text.split(":"))
+    if not (0 <= hh < 24 and 0 <= mm < 60):
+        raise ValueError(text)
+    return hh * 60 + mm
+
+
+def retry_policy(cfg):
+    retry = cfg.get("retry", {})
+    return int(retry.get("attempts", 3)), float(retry.get("delay_seconds", 5))
+
+
+def with_retry(func, what, attempts, delay):
+    """Call func(); on any exception wait `delay` seconds and retry, up to `attempts` calls in total."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return func()
+        except Exception as exc:
+            if attempt == attempts or not _transient(exc):
+                raise
+            log.warning("%s failed (attempt %d/%d): %s; retrying in %gs", what, attempt, attempts, exc, delay)
+            time.sleep(delay)
+
+
+def _transient(exc):
+    """False for errors a retry cannot fix, such as an HTTP 4xx (other than 429)."""
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return not isinstance(exc, (ValueError, KeyError))
+
+
+def in_quiet_hours(quiet, now, tz):
+    """True if `now` falls inside the configured quiet window (which may span midnight)."""
+    if not quiet:
+        return False
+    local = now.astimezone(tz)
+    minute = local.hour * 60 + local.minute
+    start, end = _parse_hhmm(quiet["start"]), _parse_hhmm(quiet["end"])
+    if start == end:
+        return False
+    return start <= minute < end if start < end else minute >= start or minute < end
 
 
 def read_gpsd(cfg):
@@ -75,6 +137,8 @@ FIELD_DATA = {
 }
 DEFAULT_FIELDS = list(FIELD_DATA)
 ALERT_MODES = ("separate", "inline", "off")
+SEVERITIES = ("Minor", "Moderate", "Severe", "Extreme")
+QUIET_MODES = ("skip", "alerts_only")
 SEP = " | "
 SYNODIC_DAYS = 29.530588853
 MOON_REF = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
@@ -98,10 +162,12 @@ def required_data(msg_cfg):
     return need
 
 
-def _nws_get(url, headers, timeout):
-    resp = requests.get(url, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return resp.json()
+def _nws_get(url, headers, timeout, retry=(1, 0)):
+    def fetch():
+        resp = requests.get(url, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json()
+    return with_retry(fetch, "NWS request", *retry)
 
 
 def _value(props, key):
@@ -115,7 +181,8 @@ def _parse_ts(text):
 def _summarize_observation(features):
     latest = features[0]["properties"]
     obs = {"temp_c": _value(latest, "temperature"), "humidity": _value(latest, "relativeHumidity"),
-           "gust_kmh": _value(latest, "windGust"), "pressure_hpa": None, "trend": None}
+           "gust_kmh": _value(latest, "windGust"), "pressure_hpa": None, "trend": None,
+           "time": _parse_ts(latest["timestamp"])}
     pressure = _value(latest, "barometricPressure")
     if pressure is not None:
         obs["pressure_hpa"] = pressure / 100
@@ -131,47 +198,75 @@ def _summarize_observation(features):
     return obs
 
 
-def get_observation(stations_url, headers, timeout):
+def get_observation(stations_url, headers, timeout, retry=(1, 0)):
     """Latest observation from the nearest station that reports a temperature."""
-    for station in _nws_get(stations_url, headers, timeout).get("features", [])[:3]:
-        features = _nws_get(f"{station['id']}/observations?limit=4", headers, timeout).get("features", [])
+    for station in _nws_get(stations_url, headers, timeout, retry).get("features", [])[:3]:
+        features = _nws_get(f"{station['id']}/observations?limit=4", headers, timeout, retry).get("features", [])
         if features and _value(features[0]["properties"], "temperature") is not None:
             return _summarize_observation(features)
     return None
 
 
-def get_weather(lat, lon, noaa, need):
-    """Fetch the NWS datasets named in `need`; each one fails independently."""
+def filter_alerts(features, flt):
+    """Event names of the alerts that pass min_severity / include / exclude (case-insensitive)."""
+    flt = flt or {}
+    floor = SEVERITIES.index(flt["min_severity"]) if flt.get("min_severity") else 0
+    include = {e.lower() for e in flt.get("include", [])}
+    exclude = {e.lower() for e in flt.get("exclude", [])}
+    events = []
+    for feature in features:
+        props = feature["properties"]
+        event, severity = props["event"], props.get("severity")
+        if event.lower() in exclude or (include and event.lower() not in include):
+            continue
+        # Alerts with an unknown severity are kept rather than risk hiding something important.
+        if severity in SEVERITIES and SEVERITIES.index(severity) < floor:
+            continue
+        events.append(event)
+    return events
+
+
+def get_weather(lat, lon, noaa, need, alert_filter=None, retry=(1, 0)):
+    """Fetch the NWS datasets named in `need`; each one fails independently.
+
+    Names of datasets that could not be fetched are listed under the "failed" key.
+    """
     headers = {"User-Agent": noaa.get("user_agent", "OZO-Meshtastic-Time-and-Weather"),
                "Accept": "application/geo+json"}
     if noaa.get("api_key"):
         headers["X-Api-Key"] = noaa["api_key"]
     timeout = noaa.get("timeout_seconds", 20)
     api_url = noaa.get("api_url", "https://api.weather.gov").rstrip("/")
-    weather = {}
+    weather = {"failed": []}
+
+    def fail(name, exc):
+        log.warning("%s lookup failed: %s", name, exc)
+        weather["failed"].append(name)
+
     if "alerts" in need:
         try:
-            data = _nws_get(f"{api_url}/alerts/active?point={lat:.4f},{lon:.4f}", headers, timeout)
-            weather["alerts"] = [f["properties"]["event"] for f in data.get("features", [])]
+            data = _nws_get(f"{api_url}/alerts/active?point={lat:.4f},{lon:.4f}", headers, timeout, retry)
+            weather["alerts"] = filter_alerts(data.get("features", []), alert_filter)
         except Exception as exc:
-            log.warning("alerts lookup failed: %s", exc)
+            fail("alerts", exc)
     if need & {"hourly", "daily", "obs"}:
         try:
-            point = _nws_get(f"{api_url}/points/{lat:.4f},{lon:.4f}", headers, timeout)["properties"]
+            point = _nws_get(f"{api_url}/points/{lat:.4f},{lon:.4f}", headers, timeout, retry)["properties"]
         except Exception as exc:
-            log.warning("NWS point lookup failed: %s", exc)
+            for key in sorted(need & {"hourly", "daily", "obs"}):
+                fail(key, exc)
             return weather
         for key, link in (("hourly", "forecastHourly"), ("daily", "forecast")):
             if key in need:
                 try:
-                    weather[key] = _nws_get(point[link], headers, timeout)["properties"]["periods"]
+                    weather[key] = _nws_get(point[link], headers, timeout, retry)["properties"]["periods"]
                 except Exception as exc:
-                    log.warning("%s forecast lookup failed: %s", key, exc)
+                    fail(key, exc)
         if "obs" in need:
             try:
-                weather["obs"] = get_observation(point["observationStations"], headers, timeout)
+                weather["obs"] = get_observation(point["observationStations"], headers, timeout, retry)
             except Exception as exc:
-                log.warning("observation lookup failed: %s", exc)
+                fail("obs", exc)
     return weather
 
 
@@ -216,8 +311,14 @@ def _abbr(text, compact):
     return text
 
 
-def _first_period(weather, key):
-    return (weather.get(key) or [None])[0]
+def _first_period(weather, key, now=None):
+    """First forecast period, skipping hourly periods that ended before `now` (stale cached data)."""
+    for period in weather.get(key) or []:
+        end = period.get("endTime")
+        if key == "hourly" and now is not None and end and _parse_ts(end) <= now:
+            continue
+        return period
+    return None
 
 
 def _f_time(c):
@@ -230,7 +331,7 @@ def _f_time_sync(c):
 
 
 def _f_conditions(c):
-    p = _first_period(c["weather"], "hourly")
+    p = _first_period(c["weather"], "hourly", c["now"])
     if not p:
         return None
     if c["compact"]:
@@ -241,7 +342,7 @@ def _f_conditions(c):
 
 
 def _f_precip(c):
-    p = _first_period(c["weather"], "hourly")
+    p = _first_period(c["weather"], "hourly", c["now"])
     chance = _value(p, "probabilityOfPrecipitation") if p else None
     if chance is None:
         return None
@@ -261,6 +362,11 @@ def _f_high_low(c):
 def _f_observation(c):
     o = c["weather"].get("obs")
     if not o:
+        return None
+    max_age = c.get("max_obs_age", 120)
+    if max_age and o.get("time") and (c["now"] - o["time"]).total_seconds() > max_age * 60:
+        log.warning("observation is %d min old (limit %d); omitting it",
+                    (c["now"] - o["time"]).total_seconds() // 60, max_age)
         return None
     temp = f"{round(o['temp_c'] * 9 / 5 + 32)}F"
     gust = round(o["gust_kmh"] / 1.609344) if o["gust_kmh"] is not None else None
@@ -354,7 +460,8 @@ def build_message(now, tz, weather, msg_cfg, max_bytes=200, lat=None, lon=None, 
     compact = msg_cfg.get("compact", True)
     fields = msg_cfg.get("fields", DEFAULT_FIELDS)
     ctx = {"now": now, "tz": tz, "weather": weather, "compact": compact,
-           "lat": lat, "lon": lon, "next_time": next_time, "time_source": time_source}
+           "lat": lat, "lon": lon, "next_time": next_time, "time_source": time_source,
+           "max_obs_age": msg_cfg.get("max_observation_age_minutes", 120)}
     parts = [text for text in (FIELD_RENDERERS[f](ctx) for f in fields) if text]
     if msg_cfg.get("alerts", "separate") == "inline":
         alert = _alert_text(weather, compact)
@@ -390,61 +497,152 @@ def open_interface(mcfg):
     return meshtastic.serial_interface.SerialInterface(devPath=mcfg.get("serial_port"))
 
 
-def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False):
+def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False, honor_quiet=True):
+    """Gather GPS time and weather and build the message(s).
+
+    Returns a dict: texts (list), time_source, failed (NWS datasets that failed), quiet (None, "skip" or
+    "alerts_only").
+    """
+    attempts, delay = retry_policy(cfg)
     time_source = "GPS time"
     try:
-        fix = read_gpsd(cfg.get("gps", {}))
+        fix = with_retry(lambda: read_gpsd(cfg.get("gps", {})), "GPS read", attempts, delay)
         now = datetime.fromisoformat(fix["time"].replace("Z", "+00:00"))
     except Exception as exc:
         if not allow_clock_fallback:
             raise
         log.warning("GPS unavailable (%s); using SYSTEM CLOCK", exc)
         fix, now, time_source = {}, datetime.now(timezone.utc), "SYSTEM CLOCK-NOT GPS"
+    result = {"texts": [], "time_source": time_source, "failed": [], "quiet": None}
+    msg_cfg = cfg.get("message", {})
+    alerts_mode = msg_cfg.get("alerts", "separate")
+    quiet_cfg = cfg.get("quiet_hours")
+    if honor_quiet and in_quiet_hours(quiet_cfg, now, tz):
+        result["quiet"] = quiet_cfg.get("mode", "skip")
+        if result["quiet"] == "skip" or alerts_mode == "off":
+            return result
     loc = cfg.get("location", {})
     lat = loc.get("latitude") if loc.get("latitude") is not None else fix.get("lat")
     lon = loc.get("longitude") if loc.get("longitude") is not None else fix.get("lon")
-    msg_cfg = cfg.get("message", {})
-    need = required_data(msg_cfg)
+    need = {"alerts"} if result["quiet"] else required_data(msg_cfg)
     weather = {}
     if need:
         try:
             if lat is None or lon is None:
                 raise RuntimeError("no location available")
-            weather = get_weather(lat, lon, cfg.get("noaa", {}), need)
+            weather = get_weather(lat, lon, cfg.get("noaa", {}), need, msg_cfg.get("alert_filter"),
+                                  (attempts, delay))
         except Exception as exc:
             log.warning("weather lookup failed: %s", exc)
-    mcfg = cfg.get("meshtastic", {})
-    max_bytes = mcfg.get("max_message_bytes", 200)
-    texts = [build_message(now, tz, weather, msg_cfg, max_bytes, lat, lon, next_time, time_source)]
-    if msg_cfg.get("alerts", "separate") == "separate":
-        texts.append(build_alert_message(weather, msg_cfg.get("compact", True), max_bytes))
-    return [t for t in texts if t], time_source != "GPS time"
+            weather = {"failed": sorted(need)}
+    result["failed"] = weather.get("failed", [])
+    max_bytes = cfg.get("meshtastic", {}).get("max_message_bytes", 200)
+    compact = msg_cfg.get("compact", True)
+    if result["quiet"]:
+        texts = [build_alert_message(weather, compact, max_bytes)]
+    else:
+        texts = [build_message(now, tz, weather, msg_cfg, max_bytes, lat, lon, next_time, time_source)]
+        if alerts_mode == "separate":
+            texts.append(build_alert_message(weather, compact, max_bytes))
+    result["texts"] = [t for t in texts if t]
+    return result
 
 
-def broadcast_once(cfg, tz, next_time=None):
-    mcfg = cfg.get("meshtastic", {})
-    texts, _ = build_messages(cfg, tz, next_time)
-    if not texts:
-        log.warning("nothing to broadcast")
-        return
-    iface = open_interface(mcfg)
+def state_path(cfg):
+    """Where the last-sent timestamp is kept, or None if no state location is available."""
+    path = cfg.get("state_file")
+    if path:
+        return path
+    state_dir = os.environ.get("STATE_DIRECTORY", "").split(":")[0]  # set by systemd StateDirectory=
+    return os.path.join(state_dir, "last_sent.json") if state_dir else None
+
+
+def seconds_since_last_send(cfg):
+    path = state_path(cfg)
+    if not path:
+        return None
     try:
-        for i, text in enumerate(texts):
-            if i:
-                time.sleep(3)  # leave airtime between consecutive messages
-            iface.sendText(text, channelIndex=mcfg.get("channel_index", 0))
-            log.info("broadcast: %s", text)
-    finally:
-        iface.close()
+        with open(path, encoding="utf-8") as fh:
+            return time.time() - float(json.load(fh)["last_sent"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def record_send(cfg):
+    path = state_path(cfg)
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"last_sent": time.time()}, fh)
+    except OSError as exc:
+        log.warning("could not write state file %s: %s", path, exc)
+
+
+def send_messages(mcfg, texts, attempts, delay):
+    """Send `texts` in order, reconnecting and retrying on failure without resending delivered messages."""
+    sent = 0
+    for attempt in range(1, attempts + 1):
+        try:
+            iface = open_interface(mcfg)
+            try:
+                while sent < len(texts):
+                    if sent:
+                        time.sleep(3)  # leave airtime between consecutive messages
+                    iface.sendText(texts[sent], channelIndex=mcfg.get("channel_index", 0))
+                    log.info("broadcast: %s", texts[sent])
+                    sent += 1
+            finally:
+                iface.close()
+            return
+        except Exception as exc:
+            if attempt == attempts:
+                raise
+            log.warning("radio send failed (attempt %d/%d): %s; retrying in %gs", attempt, attempts, exc, delay)
+            time.sleep(delay)
+
+
+def summary(status, **fields):
+    """One greppable log line per broadcast cycle, e.g. 'broadcast summary: status=ok messages=2 ...'."""
+    log.info("broadcast summary: status=%s %s", status,
+             " ".join(f"{k}={v if v not in (None, '', []) else '-'}" for k, v in fields.items()))
+
+
+def broadcast_once(cfg, tz, next_time=None, service=False):
+    """Broadcast once. In service mode quiet hours and the minimum-interval guard apply."""
+    if service:
+        min_gap = cfg.get("schedule", {}).get("min_interval_seconds", 300)
+        since = seconds_since_last_send(cfg)
+        if since is not None and 0 <= since < min_gap:
+            summary("skipped", reason="duplicate-guard", last_sent_s_ago=round(since))
+            return
+    built = build_messages(cfg, tz, next_time, honor_quiet=service)
+    texts, failed = built["texts"], built["failed"]
+    if not texts:
+        summary("skipped", reason=f"quiet-hours-{built['quiet']}" if built["quiet"] else "nothing-to-send",
+                failed=",".join(failed))
+        return
+    mcfg = cfg.get("meshtastic", {})
+    send_messages(mcfg, texts, *retry_policy(cfg))
+    if service:
+        record_send(cfg)
+    summary("partial" if failed else "ok", messages=len(texts),
+            bytes="/".join(str(len(t.encode("utf-8"))) for t in texts),
+            time_source=built["time_source"], quiet=built["quiet"], failed=",".join(failed))
 
 
 def dry_run(cfg, tz):
     max_bytes = cfg.get("meshtastic", {}).get("max_message_bytes", 200)
     next_time = next_run(cfg["schedule"], datetime.now(timezone.utc), tz)
-    texts, fallback = build_messages(cfg, tz, next_time, allow_clock_fallback=True)
-    if fallback:
+    built = build_messages(cfg, tz, next_time, allow_clock_fallback=True)
+    if built["time_source"] != "GPS time":
         print("*** WARNING: GPS unavailable - time below is the SYSTEM CLOCK, not GPS ***")
     print("DRY RUN - nothing is transmitted")
+    if built["quiet"]:
+        print(f"(quiet hours are active, mode: {built['quiet']})")
+    if built["failed"]:
+        print(f"(NWS lookups that failed: {', '.join(built['failed'])})")
+    texts = built["texts"]
     if not texts:
         print("(nothing to broadcast)")
         return 1
@@ -454,18 +652,52 @@ def dry_run(cfg, tz):
     return 0
 
 
+def check(cfg, tz):
+    """Post-install health check: config, GPS, LoRa radio and NOAA reachability. Returns a failure count."""
+    import check_radios
+    print(f"OK   config: loaded; time zone {tz.key}; "
+          f"schedule {'times ' + ','.join(cfg['schedule']['times']) if cfg['schedule'].get('times') else 'every ' + str(cfg['schedule']['interval_minutes']) + ' min'}")
+    failures = check_radios.run_checks(cfg)
+    loc = cfg.get("location", {})
+    lat, lon = loc.get("latitude"), loc.get("longitude")
+    try:
+        if lat is None or lon is None:
+            fix = read_gpsd(cfg.get("gps", {}))
+            lat, lon = fix.get("lat"), fix.get("lon")
+        if lat is None or lon is None:
+            raise RuntimeError("no location: set location.latitude/longitude or get a GPS position fix")
+        weather = get_weather(lat, lon, cfg.get("noaa", {}), {"alerts", "hourly", "daily", "obs"},
+                              (cfg.get("message", {}).get("alert_filter")), (1, 0))
+        failed = weather["failed"]
+        if len(failed) == 4:
+            raise RuntimeError("every NWS lookup failed; check internet access, noaa.api_url and noaa.user_agent")
+        if failed:
+            print(f"WARN NOAA: reachable, but these lookups failed: {', '.join(failed)}", file=sys.stderr)
+        else:
+            print(f"OK   NOAA: all lookups succeeded for {lat:.4f},{lon:.4f}")
+    except Exception as exc:
+        failures += 1
+        print(f"FAIL NOAA: {exc}", file=sys.stderr)
+    return failures
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default="config.json")
-    ap.add_argument("--once", action="store_true", help="broadcast once and exit")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="interactive test: print the message(s) that would be sent, without transmitting")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="broadcast once and exit (ignores quiet hours)")
+    mode.add_argument("--dry-run", action="store_true",
+                      help="interactive test: print the message(s) that would be sent, without transmitting")
+    mode.add_argument("--check", action="store_true",
+                      help="check config, GPS, LoRa radio and NOAA, then exit (briefly opens the radio)")
     args = ap.parse_args(argv)
-    if args.dry_run and (args.once or not (sys.stdin.isatty() and sys.stdout.isatty())):
-        ap.error("--dry-run runs only from an interactive terminal and cannot be combined with --once")
+    if args.dry_run and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        ap.error("--dry-run runs only from an interactive terminal")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config(args.config)
     tz = ZoneInfo(cfg.get("time_zone", "UTC"))
+    if args.check:
+        return 1 if check(cfg, tz) else 0
     if args.dry_run:
         return dry_run(cfg, tz)
     if args.once:
@@ -478,9 +710,10 @@ def main(argv=None):
         while (remaining := (target - datetime.now(timezone.utc)).total_seconds()) > 0:
             time.sleep(min(remaining, 30))
         try:
-            broadcast_once(cfg, tz, next_run(cfg["schedule"], target, tz))
+            broadcast_once(cfg, tz, next_run(cfg["schedule"], target, tz), service=True)
         except Exception as exc:
             log.error("broadcast failed: %s", exc)
+            summary("failed", error=type(exc).__name__ + ": " + str(exc))
 
 
 if __name__ == "__main__":

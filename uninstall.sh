@@ -20,7 +20,7 @@ rm -f "/etc/systemd/system/$UNIT"
 systemctl daemon-reload
 systemctl reset-failed "$UNIT" 2>/dev/null || true
 
-rm -rf "$DEST"
+rm -rf "$DEST" /var/lib/ozo-meshtastic-tw
 if id ozo-meshtastic >/dev/null 2>&1; then
   userdel ozo-meshtastic
 fi

@@ -58,11 +58,8 @@ def lora_hint(exc, cfg):
             "meshtastic.serial_port in config.json. If you use meshtasticd, set meshtastic.connection to 'tcp'.")
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--config", default="config.json")
-    args = ap.parse_args(argv)
-    cfg = app.load_config(args.config)
+def run_checks(cfg):
+    """Run the GPS and LoRa checks, printing results. Returns the number of failures."""
     failures = 0
     for name, check, hint in (("GPS", check_gps, gps_hint), ("LoRa", check_lora, lora_hint)):
         try:
@@ -71,7 +68,14 @@ def main(argv=None):
             failures += 1
             print(f"FAIL {name}: {hint(exc, cfg)}", file=sys.stderr)
             print(f"     (details: {exc or type(exc).__name__})", file=sys.stderr)
-    return 1 if failures else 0
+    return failures
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--config", default="config.json")
+    args = ap.parse_args(argv)
+    return 1 if run_checks(app.load_config(args.config)) else 0
 
 
 if __name__ == "__main__":

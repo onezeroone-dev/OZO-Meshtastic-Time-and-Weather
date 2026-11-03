@@ -9,6 +9,7 @@ User=ozo-meshtastic
 Group=dialout
 WorkingDirectory=/opt/ozo-meshtastic-tw
 ExecStart=/opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json
+StateDirectory=ozo-meshtastic-tw
 Restart=on-failure
 RestartSec=30
 NoNewPrivileges=true

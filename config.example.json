@@ -35,11 +35,23 @@
       "next_broadcast"
     ],
     "alerts": "separate",
-    "compact": true
+    "compact": true,
+    "alert_filter": {
+      "min_severity": "Minor",
+      "include": [],
+      "exclude": []
+    },
+    "max_observation_age_minutes": 120
   },
   "schedule": {
     "interval_minutes": 60,
-    "times": []
+    "times": [],
+    "min_interval_seconds": 300
+  },
+  "quiet_hours": null,
+  "retry": {
+    "attempts": 3,
+    "delay_seconds": 5
   },
   "time_zone": "UTC"
 }

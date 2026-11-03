@@ -11,7 +11,7 @@ Copy `config.example.json` to `config.json`:
 - `location`: optional fixed latitude/longitude; if null, the GPS position is used.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `schedule`: `times` (list of local `HH:MM`) or, if empty, `interval_minutes`.
-- `time_zone`: IANA zone for the displayed time.
+- `time_zone`: IANA zone for the displayed time, e.g. `America/Denver` (see the [list of tz database time zones](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for valid names).
 
 ## Run manually (venv)
     python3 -m venv venv && venv/bin/pip install -r requirements.txt

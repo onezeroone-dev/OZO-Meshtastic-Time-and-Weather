@@ -85,7 +85,7 @@ Edit `/etc/ozo-meshtastic-tw/config.json`, then `sudo systemctl start ozo-meshta
 Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summary line you can grep, e.g. `journalctl -u ozo-meshtastic-tw | grep 'broadcast summary'`: `status=ok|partial|skipped|failed` plus message count, byte sizes, time source and any failed NWS lookups (`partial` means some lookups failed). The unit file is `systemd/ozo-meshtastic-tw.service`.
 
 ## Upgrading
-Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). If your config had active `quiet_hours`, replace that object with `schedule.broadcast_window`; startup will report an error until you do. Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
+Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
 
 ## Checking the radios (`check_radios.py`)
 `check_radios.py` verifies that the two radios this service depends on are usable, using the same code paths and settings as the service. It transmits nothing.

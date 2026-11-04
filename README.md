@@ -18,8 +18,14 @@ Complete these before running `install.sh`. Device names and setup steps depend 
 3. **LoRa radio.** How it attaches decides the connection type. A radio running Meshtastic firmware over USB serial works with `meshtastic.connection: serial`. An SPI HAT driven by the Linux host itself needs [`meshtasticd`](https://meshtastic.org/docs/software/linux/) running, with `meshtastic.connection: tcp`. See Meshtastic's documentation for [installation](https://meshtastic.org/docs/meshtasticd/installation/raspbian/) and [configuration](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/) examples for Raspberry Pi.
 4. **Meshtastic settings.** The tested Waveshare HAT uses `meshtasticd` on the same host.
    - Enable SPI on the Linux host and ensure the HAT's SPI, GPIO, and other required pins are configured correctly. On Raspberry Pi OS, see Meshtastic's [Raspberry Pi hardware instructions](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/).
-   - Install `meshtasticd` for your Linux distribution. Find the radio's matching preset under `/etc/meshtasticd/available.d` and copy it into `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). The preset must match the HAT and its pinout; do not select one based only on the SX1262 chip. Configure `meshtasticd` to use the correct LoRa region. Run the daemon with permission to access SPI, GPIO, and other required interfaces.
+   - Install `meshtasticd` for your Linux distribution. Find the radio's matching preset under `/etc/meshtasticd/available.d` and copy it into `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). The preset must match the HAT and its pinout; do not select one based only on the SX1262 chip. Run the daemon with permission to access SPI, GPIO, and other required interfaces.
    - Start `meshtasticd` and confirm it is listening on its local TCP API (default port 4403). The commands below assume the daemon is on this host at `localhost`; change the host if needed.
+   - **Set the LoRa region.** This is required: a new node has the region `UNSET` and will not transmit until one is chosen. Use the code for your location (for example `US`, `EU_868`, `ANZ`; see the [Meshtastic region list](https://meshtastic.org/docs/configuration/radio/lora/#region)). The node reboots when the region changes, so wait about 10 seconds before the next command:
+
+         meshtastic --host localhost --set lora.region US
+         meshtastic --host localhost --info | grep '"region"'
+
+     The second command should print your region, not `UNSET`.
    - Set the node's displayed long and short names (replace the examples; the short name is up to four characters):
 
          meshtastic --host localhost --set-owner "Weather Station"

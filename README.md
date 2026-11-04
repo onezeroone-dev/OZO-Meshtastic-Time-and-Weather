@@ -35,8 +35,7 @@ Copy `config.example.json` to `config.json`:
   - `alert_filter`: limits which NWS alerts are broadcast. `min_severity` (`Minor`, `Moderate`, `Severe` or `Extreme`; alerts with an unknown severity are always kept), `include` (if non-empty, only these event names, e.g. `"Tornado Warning"`) and `exclude` (event names to drop, e.g. `"Special Weather Statement"`). Event names are matched case-insensitively.
   - `max_observation_age_minutes` (default 120; 0 disables): an observation older than this is omitted rather than shown as current. Hourly forecast periods that have already ended are skipped for the same reason.
   - Parts are added in the listed order as whole units; any part that would exceed `meshtastic.max_message_bytes` is skipped, so the message is never cut mid-field. Sun and moon values are calculated locally. Weather values are in US units (°F, mph). Each NWS lookup fails independently, so a partial outage still yields a partial message. Only the lookups needed by the chosen fields are made.
-- `schedule`: `times` (list of local `HH:MM`) or, if empty, `interval_minutes`. `min_interval_seconds` (default 300) is a duplicate guard: the service will not broadcast again within this many seconds of the last successful broadcast, even if it is restarted (the timestamp is kept in the systemd state directory, `/var/lib/ozo-meshtastic-tw`, or in `state_file` if you set one).
-- `quiet_hours`: optional, e.g. `{"start": "22:00", "end": "06:00", "mode": "skip"}` (local times; the window may span midnight). `mode` is `skip` (send nothing; no weather is fetched) or `alerts_only` (send only the alert message, if there are active alerts and `message.alerts` is not `off`). Applies to the running service and `--dry-run`, not `--once`. `null` disables it.
+- `schedule`: `times` (list of local `HH:MM`) takes precedence when non-empty; otherwise `interval_minutes` controls repeats. With `broadcast_window` set, its `start` and `end` are local `HH:MM` times; the first broadcast is at `start`, then repeats every `interval_minutes` until (but not including) `end`. For example, `06:00`–`22:00` hourly schedules 06:00 through 21:00. Windows may cross midnight, such as `18:00`–`02:00`. If the service starts within the window, it waits until the next interval slot; outside the window, it waits for the next start. Missed broadcasts are not replayed. If no window is configured, interval scheduling remains relative to service startup. `min_interval_seconds` (default 300) is a duplicate guard: the service will not broadcast again within this many seconds of the last successful broadcast, even if it is restarted (the timestamp is kept in the systemd state directory, `/var/lib/ozo-meshtastic-tw`, or in `state_file` if you set one).
 - `retry`: `attempts` (default 3) and `delay_seconds` (default 5) for GPS reads, NWS requests and radio sends. Only transient errors are retried (network errors, HTTP 5xx and 429, a busy radio); a failed send reconnects and resends only the messages not yet delivered.
 - `time_zone`: IANA zone for the displayed time, e.g. `America/Denver` (see the [list of tz database time zones](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for valid names).
 
@@ -57,8 +56,8 @@ Legend (compact form): `Pt`/`Mstly`/`Cldy`/`Chc`/`Lkly`/`Sct`/`Iso` are Partly/M
     venv/bin/python ozo_meshtastic_tw.py --config config.json --once
 
 Options (mutually exclusive):
-- `--once`: broadcast once and exit. Ignores quiet hours and the duplicate guard.
-- `--dry-run`: from an interactive terminal, ignore the schedule, build the message(s) now and print each with its byte count instead of transmitting. It never opens the LoRa radio. If gpsd is unreachable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). Quiet hours and failed NWS lookups are reported. It refuses to run when not attached to a terminal.
+- `--once`: broadcast once and exit. Ignores the schedule and duplicate guard.
+- `--dry-run`: from an interactive terminal, ignore the schedule, build the message(s) now and print each with its byte count instead of transmitting. It never opens the LoRa radio. If gpsd is unreachable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). Failed NWS lookups are reported. It refuses to run when not attached to a terminal.
 - `--check`: post-install health check of the config, GPS, LoRa radio and NOAA reachability; exits non-zero on any failure. It briefly opens the radio, like `check_radios.py`.
 
 ## Install as a service
@@ -68,7 +67,7 @@ Edit `/etc/ozo-meshtastic-tw/config.json`, then `sudo systemctl start ozo-meshta
 Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summary line you can grep, e.g. `journalctl -u ozo-meshtastic-tw | grep 'broadcast summary'`: `status=ok|partial|skipped|failed` plus message count, byte sizes, time source and any failed NWS lookups (`partial` means some lookups failed). The unit file is `systemd/ozo-meshtastic-tw.service`.
 
 ## Upgrading
-Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
+Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). If your config had active `quiet_hours`, replace that object with `schedule.broadcast_window`; startup will report an error until you do. Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
 
 ## Checking the radios (`check_radios.py`)
 `check_radios.py` verifies that the two radios this service depends on are usable, using the same code paths and settings as the service. It transmits nothing.
@@ -110,7 +109,7 @@ Guidance:
 - `ERROR`: `broadcast failed: ...`: the whole cycle failed. The service keeps running and tries again at the next scheduled time.
 - Startup problems (bad config, unknown time zone) end the process with a Python traceback; systemd restarts it every 30 seconds, so the same error repeats in the journal until you fix it. Check `systemctl status ozo-meshtastic-tw`.
 
-**Reading the summary line:** `status=ok` (all sent), `partial` (sent, but some NWS lookups failed; see `failed=`), `skipped` (`reason=duplicate-guard`, `quiet-hours-skip`, `quiet-hours-alerts_only` or `nothing-to-send`; expected, not a fault), `failed` (nothing sent; see `error=`).
+**Reading the summary line:** `status=ok` (all sent), `partial` (sent, but some NWS lookups failed; see `failed=`), `skipped` (`reason=duplicate-guard` or `nothing-to-send`; expected, not a fault), `failed` (nothing sent; see `error=`).
 
 **First steps for any problem**
 1. `sudo systemctl status ozo-meshtastic-tw` and the recent journal.
@@ -128,7 +127,7 @@ Guidance:
 | `observation is N min old (limit M); omitting it` | The nearest station has stopped reporting. Raise `message.max_observation_age_minutes` or drop the `observation` field. |
 | `weather lookup failed: no location available` | No `location` set and no GPS position. Set `location.latitude`/`longitude` or fix the GPS. |
 | `could not write state file ...` | The state directory is not writable. The duplicate guard is then ineffective. Check `/var/lib/ozo-meshtastic-tw` ownership, or set `state_file`. |
-| Nothing is sent, `status=skipped` | Expected if inside `quiet_hours`, within `schedule.min_interval_seconds` of the last send, or the message has no content. |
+| Nothing is sent, `status=skipped` | Expected if there is no message content or the duplicate guard is active. With `broadcast_window`, the service waits for the next scheduled slot outside the window. |
 | Message missing fields | Fields that would exceed `meshtastic.max_message_bytes` are skipped whole; use `--dry-run` to see byte counts, shorten the field list, or enable `compact`. |
 | No log lines at all | Service not running. Check `systemctl status`, and `systemctl is-enabled ozo-meshtastic-tw`. |
 
@@ -142,13 +141,13 @@ Stops and removes the service, `/opt/ozo-meshtastic-tw`, and the `ozo-meshtastic
 - **US coverage only.** The NOAA/NWS API serves the United States and its territories; elsewhere the weather lookups fail (the time, sun and moon fields still work).
 - **Message size.** Messages are limited to `meshtastic.max_message_bytes` (default 200); fields that do not fit are dropped whole, and a single alert message longer than the limit is truncated.
 - **Forecast, not measurement.** Conditions come from NWS gridded forecasts, and the observation is from the nearest reporting station, which may be some distance away.
-- **System clock.** The schedule and the duplicate guard use the Pi's system clock (quiet hours use the GPS time when available). A Pi without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
+- **System clock.** The schedule and duplicate guard use the Pi's system clock. A Pi without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
 - **Sun and moon** are calculated locally with standard approximations: sunrise and sunset are accurate to within about a couple of minutes, moon phase to the nearest eighth of the cycle.
 - **Fields are US units** (°F, mph, hPa).
 - **Tested on one hardware setup.** See "Tested hardware" above. On different hardware, run `check_radios.py`, `--check` and `--dry-run` before relying on it.
 
 ## Mesh etiquette and airtime
-LoRa airtime is shared by every node on the channel, and every broadcast is heard by all of them. Use a sensible interval (the default is hourly; avoid going much faster), consider a dedicated channel or a long interval on busy meshes, and keep `fields` lean. Each message is sent once with a short pause between messages. Use `quiet_hours` to stay silent overnight, and follow the norms of your local mesh community.
+LoRa airtime is shared by every node on the channel, and every broadcast is heard by all of them. Use a sensible interval (the example config broadcasts hourly from 06:00 through 21:00; avoid going much faster), consider a dedicated channel or a long interval on busy meshes, and keep `fields` lean. Each message is sent once with a short pause between messages. Use `schedule.broadcast_window` to restrict broadcasts to certain hours, and follow the norms of your local mesh community.
 
 ## Security notes
 - `/etc/ozo-meshtastic-tw/config.json` is installed root-owned with mode `0640`, readable by the service group only. It may contain the optional NOAA `api_key`.

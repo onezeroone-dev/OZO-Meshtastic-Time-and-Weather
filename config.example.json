@@ -46,9 +46,12 @@
   "schedule": {
     "interval_minutes": 60,
     "times": [],
+    "broadcast_window": {
+      "start": "06:00",
+      "end": "22:00"
+    },
     "min_interval_seconds": 300
   },
-  "quiet_hours": null,
   "retry": {
     "attempts": 3,
     "delay_seconds": 5

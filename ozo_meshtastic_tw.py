@@ -21,8 +21,20 @@ def load_config(path):
     with open(path, encoding="utf-8") as fh:
         cfg = json.load(fh)
     sched = cfg.get("schedule", {})
-    if not sched.get("times") and not sched.get("interval_minutes"):
-        raise ValueError("schedule needs 'interval_minutes' or 'times'")
+    if "quiet_hours" in cfg and cfg["quiet_hours"]:
+        raise ValueError("quiet_hours has been replaced by schedule.broadcast_window")
+    if not sched.get("times"):
+        window = sched.get("broadcast_window")
+        if window:
+            for key in ("start", "end"):
+                try:
+                    _parse_hhmm(window[key])
+                except (KeyError, ValueError, AttributeError) as exc:
+                    raise ValueError(f"schedule.broadcast_window.{key} must be HH:MM") from exc
+            if _parse_hhmm(window["start"]) == _parse_hhmm(window["end"]):
+                raise ValueError("schedule.broadcast_window.start and end must differ")
+        if not sched.get("interval_minutes") or int(sched["interval_minutes"]) < 1:
+            raise ValueError("schedule needs a positive 'interval_minutes' or non-empty 'times'")
     msg = cfg.get("message", {})
     unknown = [f for f in msg.get("fields", []) if f not in FIELD_DATA]
     if unknown:
@@ -35,15 +47,6 @@ def load_config(path):
     for key in ("include", "exclude"):
         if not isinstance(flt.get(key, []), list):
             raise ValueError(f"message.alert_filter.{key} must be a list of NWS event names")
-    quiet = cfg.get("quiet_hours")
-    if quiet:
-        for key in ("start", "end"):
-            try:
-                _parse_hhmm(quiet[key])
-            except (KeyError, ValueError, AttributeError) as exc:
-                raise ValueError(f"quiet_hours.{key} must be HH:MM") from exc
-        if quiet.get("mode", "skip") not in QUIET_MODES:
-            raise ValueError(f"quiet_hours.mode must be one of {list(QUIET_MODES)}")
     retry = cfg.get("retry", {})
     if int(retry.get("attempts", 3)) < 1 or float(retry.get("delay_seconds", 5)) < 0:
         raise ValueError("retry.attempts must be >= 1 and retry.delay_seconds >= 0")
@@ -79,18 +82,6 @@ def _transient(exc):
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
         return exc.response.status_code >= 500 or exc.response.status_code == 429
     return not isinstance(exc, (ValueError, KeyError))
-
-
-def in_quiet_hours(quiet, now, tz):
-    """True if `now` falls inside the configured quiet window (which may span midnight)."""
-    if not quiet:
-        return False
-    local = now.astimezone(tz)
-    minute = local.hour * 60 + local.minute
-    start, end = _parse_hhmm(quiet["start"]), _parse_hhmm(quiet["end"])
-    if start == end:
-        return False
-    return start <= minute < end if start < end else minute >= start or minute < end
 
 
 def read_gpsd(cfg):
@@ -138,7 +129,6 @@ FIELD_DATA = {
 DEFAULT_FIELDS = list(FIELD_DATA)
 ALERT_MODES = ("separate", "inline", "off")
 SEVERITIES = ("Minor", "Moderate", "Severe", "Extreme")
-QUIET_MODES = ("skip", "alerts_only")
 SEP = " | "
 SYNODIC_DAYS = 29.530588853
 MOON_REF = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
@@ -483,9 +473,28 @@ def next_run(sched, now, tz):
             hh, mm = (int(x) for x in t.split(":"))
             for day in (0, 1):
                 c = (local + timedelta(days=day)).replace(hour=hh, minute=mm, second=0, microsecond=0)
-                if c > local:
+                if c.astimezone(timezone.utc) > now.astimezone(timezone.utc):
                     candidates.append(c)
-        return min(candidates)
+        return min(candidates, key=lambda candidate: candidate.astimezone(timezone.utc))
+    window = sched.get("broadcast_window")
+    if window:
+        local_now = now.astimezone(tz)
+        start = _parse_hhmm(window["start"])
+        end = _parse_hhmm(window["end"])
+        duration = (end - start) % (24 * 60)
+        candidates = []
+        for day in (-1, 0, 1):
+            date = local_now.date() + timedelta(days=day)
+            hour, minute = divmod(start, 60)
+            window_start = local_now.replace(year=date.year, month=date.month, day=date.day,
+                                             hour=hour, minute=minute, second=0, microsecond=0)
+            for offset in range(0, duration, int(sched["interval_minutes"])):
+                candidate = window_start + timedelta(minutes=offset)
+                if candidate.astimezone(timezone.utc) > now.astimezone(timezone.utc):
+                    candidates.append(candidate)
+        if candidates:
+            return min(candidates, key=lambda candidate: candidate.astimezone(timezone.utc))
+        raise ValueError("schedule.broadcast_window contains no future broadcast")
     return now + timedelta(minutes=sched["interval_minutes"])
 
 
@@ -497,11 +506,10 @@ def open_interface(mcfg):
     return meshtastic.serial_interface.SerialInterface(devPath=mcfg.get("serial_port"))
 
 
-def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False, honor_quiet=True):
+def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False):
     """Gather GPS time and weather and build the message(s).
 
-    Returns a dict: texts (list), time_source, failed (NWS datasets that failed), quiet (None, "skip" or
-    "alerts_only").
+    Returns a dict: texts (list), time_source, failed (NWS datasets that failed).
     """
     attempts, delay = retry_policy(cfg)
     time_source = "GPS time"
@@ -513,18 +521,13 @@ def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False, honor_qu
             raise
         log.warning("GPS unavailable (%s); using SYSTEM CLOCK", exc)
         fix, now, time_source = {}, datetime.now(timezone.utc), "SYSTEM CLOCK-NOT GPS"
-    result = {"texts": [], "time_source": time_source, "failed": [], "quiet": None}
+    result = {"texts": [], "time_source": time_source, "failed": []}
     msg_cfg = cfg.get("message", {})
     alerts_mode = msg_cfg.get("alerts", "separate")
-    quiet_cfg = cfg.get("quiet_hours")
-    if honor_quiet and in_quiet_hours(quiet_cfg, now, tz):
-        result["quiet"] = quiet_cfg.get("mode", "skip")
-        if result["quiet"] == "skip" or alerts_mode == "off":
-            return result
     loc = cfg.get("location", {})
     lat = loc.get("latitude") if loc.get("latitude") is not None else fix.get("lat")
     lon = loc.get("longitude") if loc.get("longitude") is not None else fix.get("lon")
-    need = {"alerts"} if result["quiet"] else required_data(msg_cfg)
+    need = required_data(msg_cfg)
     weather = {}
     if need:
         try:
@@ -538,12 +541,9 @@ def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False, honor_qu
     result["failed"] = weather.get("failed", [])
     max_bytes = cfg.get("meshtastic", {}).get("max_message_bytes", 200)
     compact = msg_cfg.get("compact", True)
-    if result["quiet"]:
-        texts = [build_alert_message(weather, compact, max_bytes)]
-    else:
-        texts = [build_message(now, tz, weather, msg_cfg, max_bytes, lat, lon, next_time, time_source)]
-        if alerts_mode == "separate":
-            texts.append(build_alert_message(weather, compact, max_bytes))
+    texts = [build_message(now, tz, weather, msg_cfg, max_bytes, lat, lon, next_time, time_source)]
+    if alerts_mode == "separate":
+        texts.append(build_alert_message(weather, compact, max_bytes))
     result["texts"] = [t for t in texts if t]
     return result
 
@@ -609,18 +609,17 @@ def summary(status, **fields):
 
 
 def broadcast_once(cfg, tz, next_time=None, service=False):
-    """Broadcast once. In service mode quiet hours and the minimum-interval guard apply."""
+    """Broadcast once. In service mode the minimum-interval guard applies."""
     if service:
         min_gap = cfg.get("schedule", {}).get("min_interval_seconds", 300)
         since = seconds_since_last_send(cfg)
         if since is not None and 0 <= since < min_gap:
             summary("skipped", reason="duplicate-guard", last_sent_s_ago=round(since))
             return
-    built = build_messages(cfg, tz, next_time, honor_quiet=service)
+    built = build_messages(cfg, tz, next_time)
     texts, failed = built["texts"], built["failed"]
     if not texts:
-        summary("skipped", reason=f"quiet-hours-{built['quiet']}" if built["quiet"] else "nothing-to-send",
-                failed=",".join(failed))
+        summary("skipped", reason="nothing-to-send", failed=",".join(failed))
         return
     mcfg = cfg.get("meshtastic", {})
     send_messages(mcfg, texts, *retry_policy(cfg))
@@ -628,7 +627,7 @@ def broadcast_once(cfg, tz, next_time=None, service=False):
         record_send(cfg)
     summary("partial" if failed else "ok", messages=len(texts),
             bytes="/".join(str(len(t.encode("utf-8"))) for t in texts),
-            time_source=built["time_source"], quiet=built["quiet"], failed=",".join(failed))
+            time_source=built["time_source"], failed=",".join(failed))
 
 
 def dry_run(cfg, tz):
@@ -638,8 +637,6 @@ def dry_run(cfg, tz):
     if built["time_source"] != "GPS time":
         print("*** WARNING: GPS unavailable - time below is the SYSTEM CLOCK, not GPS ***")
     print("DRY RUN - nothing is transmitted")
-    if built["quiet"]:
-        print(f"(quiet hours are active, mode: {built['quiet']})")
     if built["failed"]:
         print(f"(NWS lookups that failed: {', '.join(built['failed'])})")
     texts = built["texts"]
@@ -655,8 +652,16 @@ def dry_run(cfg, tz):
 def check(cfg, tz):
     """Post-install health check: config, GPS, LoRa radio and NOAA reachability. Returns a failure count."""
     import check_radios
-    print(f"OK   config: loaded; time zone {tz.key}; "
-          f"schedule {'times ' + ','.join(cfg['schedule']['times']) if cfg['schedule'].get('times') else 'every ' + str(cfg['schedule']['interval_minutes']) + ' min'}")
+    sched = cfg["schedule"]
+    if sched.get("times"):
+        schedule_text = "times " + ",".join(sched["times"])
+    elif sched.get("broadcast_window"):
+        window = sched["broadcast_window"]
+        schedule_text = (f"every {sched['interval_minutes']} min from "
+                         f"{window['start']} to {window['end']}")
+    else:
+        schedule_text = f"every {sched['interval_minutes']} min"
+    print(f"OK   config: loaded; time zone {tz.key}; schedule {schedule_text}")
     failures = check_radios.run_checks(cfg)
     loc = cfg.get("location", {})
     lat, lon = loc.get("latitude"), loc.get("longitude")
@@ -685,7 +690,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default="config.json")
     mode = ap.add_mutually_exclusive_group()
-    mode.add_argument("--once", action="store_true", help="broadcast once and exit (ignores quiet hours)")
+    mode.add_argument("--once", action="store_true", help="broadcast once and exit")
     mode.add_argument("--dry-run", action="store_true",
                       help="interactive test: print the message(s) that would be sent, without transmitting")
     mode.add_argument("--check", action="store_true",

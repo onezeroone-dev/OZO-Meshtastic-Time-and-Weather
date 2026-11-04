@@ -73,6 +73,8 @@ Legend (compact form): `Pt`/`Mstly`/`Cldy`/`Chc`/`Lkly`/`Sct`/`Iso` are Partly/M
     python3 -m venv venv && venv/bin/pip install -r requirements.txt
     venv/bin/python ozo_meshtastic_tw.py --config config.json --once
 
+This is for running from a checkout, with a `config.json` you copied from `config.example.json` in the current directory. For an installed service, see "Install as a service" for the `/opt` and `/etc` paths.
+
 Options (mutually exclusive):
 - `--once`: broadcast once and exit. Ignores the schedule and duplicate guard.
 - `--dry-run`: from an interactive terminal, ignore the schedule, build the message(s) now and print each with its byte count instead of transmitting. It never opens the LoRa radio. If gpsd is unreachable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). Failed NWS lookups are reported. It refuses to run when not attached to a terminal.
@@ -81,7 +83,14 @@ Options (mutually exclusive):
 ## Install as a service
     sudo ./install.sh
 The installer is for Debian-based Linux systems using `apt` and `systemd`. It first runs `check_radios.py` as the service user and aborts (without installing the service) if gpsd cannot supply a GPS fix/time or the Meshtastic radio cannot be reached. It uses `/etc/ozo-meshtastic-tw/config.json` (created from the example if absent), so a non-default serial port or gpsd host must be set there first; re-run the installer after fixing any problem. You can run the check on its own with `venv/bin/python check_radios.py --config config.json`.
-Edit `/etc/ozo-meshtastic-tw/config.json`, then `sudo systemctl start ozo-meshtastic-tw`.
+The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuration in `/etc/ozo-meshtastic-tw/config.json` (not in `/opt`). The config is readable only by root and the `ozo-meshtastic` group, and `--config` defaults to a `config.json` in the current directory, so run the installed program as the service user and pass the config path explicitly. With the service stopped (the checks open the radio):
+
+    sudo systemctl stop ozo-meshtastic-tw
+    sudo -u ozo-meshtastic /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json --check
+
+`--dry-run` needs an interactive terminal and may not work under `sudo -u`; if it refuses, run it with `sudo` instead (`sudo /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json --dry-run`).
+
+Edit `/etc/ozo-meshtastic-tw/config.json` (`sudo nano`), then `sudo systemctl start ozo-meshtastic-tw`.
 Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summary line you can grep, e.g. `journalctl -u ozo-meshtastic-tw | grep 'broadcast summary'`: `status=ok|partial|skipped|failed` plus message count, byte sizes, time source and any failed NWS lookups (`partial` means some lookups failed). The unit file is `systemd/ozo-meshtastic-tw.service`.
 
 ## Upgrading

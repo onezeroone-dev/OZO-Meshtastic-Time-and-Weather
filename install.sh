@@ -24,3 +24,4 @@ install -m 0644 "$SRC/systemd/ozo-meshtastic-tw.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable ozo-meshtastic-tw.service
 echo "Edit $CONF/config.json, then: systemctl start ozo-meshtastic-tw"
+echo "To run the full check: sudo -u ozo-meshtastic $DEST/venv/bin/python $DEST/ozo_meshtastic_tw.py --config $CONF/config.json --check"

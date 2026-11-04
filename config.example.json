@@ -1,6 +1,6 @@
 {
   "meshtastic": {
-    "connection": "serial",
+    "connection": "tcp",
     "serial_port": null,
     "tcp_host": "localhost",
     "channel_index": 0,

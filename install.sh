@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install as a systemd service on Raspberry Pi OS (Debian Trixie). Run with sudo.
+# Install as a systemd service on Debian-based Linux. Run with sudo.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 DEST=/opt/ozo-meshtastic-tw

@@ -995,6 +995,22 @@ def open_interface(mcfg):
 
 
 # BROADCASTING
+# has_fixed_location function
+def has_fixed_location(cfg):
+    """
+    DESCRIPTION
+    Determines whether the configuration supplies a fixed latitude and longitude, which makes the GPS optional.
+
+    PARAMETERS
+    cfg: The configuration dictionary.
+
+    RETURNS
+    True if both location.latitude and location.longitude are set.
+    """
+    loc = cfg.get("location") or {}
+    return loc.get("latitude") is not None and loc.get("longitude") is not None
+
+
 # build_messages function
 def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False):
     """
@@ -1005,7 +1021,8 @@ def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False):
     cfg: The configuration dictionary.
     tz: The local time zone.
     next_time: The time of the next broadcast, if known.
-    allow_clock_fallback: True to use the system clock if the GPS is unavailable (for --dry-run only).
+    allow_clock_fallback: True to use the system clock if the GPS is unavailable (always true for --dry-run; a
+    live broadcast also falls back when a fixed location is configured).
 
     RETURNS
     A dictionary with texts (list), time_source, and failed (NWS datasets that failed).
@@ -1017,8 +1034,8 @@ def build_messages(cfg, tz, next_time=None, allow_clock_fallback=False):
         fix = with_retry(lambda: read_gpsd(cfg.get("gps", {})), "GPS read", attempts, delay)
         now = datetime.fromisoformat(fix["time"].replace("Z", "+00:00"))
     except Exception as exc:
-        # GPS is unavailable; determine if the system clock may stand in
-        if not allow_clock_fallback:
+        # GPS is unavailable; the system clock may stand in for --dry-run or when a fixed location is configured
+        if not (allow_clock_fallback or has_fixed_location(cfg)):
             raise
         # Fallback is allowed; label the time source clearly
         log.warning("GPS unavailable (%s); using SYSTEM CLOCK", exc)

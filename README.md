@@ -84,7 +84,7 @@ The LoRa region, channel key and modem preset must match the other mesh nodes. S
 Copy `config.example.json` to `config.json`:
 - `meshtastic`: `connection` (`serial` for a self-contained Meshtastic device or `tcp` for `meshtasticd`; the example uses the selected USB/serial radio), `serial_port` (null = autodetect; set the discovered port for predictable selection), `tcp_host`, `channel_index`, `max_message_bytes` (message is truncated to this many UTF-8 bytes; default 200).
 - `gps`: gpsd host/port and fix timeout. The physical GNSS serial device is configured in gpsd, not this file.
-- `location`: optional fixed latitude/longitude; if null, the GPS position is used.
+- `location`: optional fixed latitude/longitude; if null, the GPS position is used. **Setting both also makes the GPS optional**: if gpsd is unreachable or has no fix, the service still broadcasts, using the system clock (the time-sync field reads `SYSTEM CLOCK-NOT GPS`) and the fixed location for weather and sun times. This allows a low-cost build with just a Pi and a radio. Keep the Pi's clock accurate (NTP) in that case, because there is no GPS time to correct it. `--check` reports the missing GPS as a warning rather than a failure.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `message`: controls the broadcast content.
   - `fields`: ordered list of parts to include (remove or reorder to taste). Valid names: `time`, `time_sync` (shows "GPS time" when the time comes from the GPS), `conditions` (current forecast hour: sky, temperature, wind), `precip` (chance of precipitation), `high_low` (high and low from the daily forecast; after the day's high period has passed this may be tomorrow's), `observation` (latest station observation: temperature, humidity, wind, pressure in hPa with a rising/falling trend when available), `outlook` (next forecast period), `sun` (sunrise and sunset), `moon` (phase and percent illuminated), `next_broadcast` (local time of the next scheduled broadcast; omitted with `--once`).
@@ -187,7 +187,7 @@ Guidance:
 
 | Log message or symptom | Likely cause and fix |
 |---|---|
-| `GPS unavailable (...); using SYSTEM CLOCK` (time field reads `SYSTEM CLOCK-NOT GPS`) | gpsd is stopped or has no fix. Check `systemctl status gpsd`, `gpsmon`/`cgps`, antenna view, `gps.*` settings. |
+| `GPS unavailable (...); using SYSTEM CLOCK` (time field reads `SYSTEM CLOCK-NOT GPS`) | gpsd is stopped or has no fix, and a fixed `location` is set (or this is `--dry-run`), so the system clock was used. Without a fixed location a live broadcast is skipped instead. Check `systemctl status gpsd`, `gpsmon`/`cgps`, antenna view, `gps.*` settings. |
 | `radio send failed (attempt n/m)` with "Could not exclusively lock port" | Another program has the serial port. Close it, or use `meshtasticd` with `connection: tcp`. See "Device access and locking". |
 | `radio send failed` with "Permission denied" | The service user is not in `dialout`, or the wrong `serial_port` is set. |
 | `... lookup failed: ...` (alerts, hourly, daily, obs) | NWS unreachable or erroring. Check internet access, `noaa.api_url` and `noaa.user_agent`. HTTP 4xx errors (other than 429) are not retried; NWS is occasionally down, and the next cycle usually recovers. Fields for failed lookups are left out (`status=partial`). |

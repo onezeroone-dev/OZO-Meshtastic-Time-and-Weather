@@ -171,6 +171,11 @@ def run_checks(cfg):
             check(cfg)
         except (Exception, SystemExit) as exc:
             # The check failed; count it and report the hint and the underlying error
+            if name == "GPS" and app.has_fixed_location(cfg):
+                # A fixed location makes the GPS optional; the service falls back to the system clock
+                print(f"WARN GPS: unavailable, but a fixed location is configured so the service will use the "
+                      f"SYSTEM CLOCK. ({exc or type(exc).__name__})", file=sys.stderr)
+                continue
             failures += 1
             print(f"FAIL {name}: {hint(exc, cfg)}", file=sys.stderr)
             print(f"     (details: {exc or type(exc).__name__})", file=sys.stderr)

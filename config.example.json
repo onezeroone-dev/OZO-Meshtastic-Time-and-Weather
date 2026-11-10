@@ -12,8 +12,8 @@
     "timeout_seconds": 15
   },
   "location": {
-    "latitude": null,
-    "longitude": null
+    "latitude": 39.7392,
+    "longitude": -104.9903
   },
   "noaa": {
     "api_url": "https://api.weather.gov",

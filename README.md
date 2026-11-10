@@ -131,7 +131,7 @@ The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuratio
 Edit `/etc/ozo-meshtastic-tw/config.json` (`sudo nano`), then `sudo systemctl start ozo-meshtastic-tw`.
 Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summary line you can grep, e.g. `journalctl -u ozo-meshtastic-tw | grep 'broadcast summary'`: `status=ok|partial|skipped|failed` plus message count, byte sizes, time source and any failed NWS lookups (`partial` means some lookups failed). The unit file is `systemd/ozo-meshtastic-tw.service`.
 
-Broadcasts request acknowledgments using the same `sendText` options as the Meshtastic CLI, as an experiment to investigate delayed delivery. This may affect radio retries and mesh traffic. OZO does not wait for an acknowledgment, and `status=ok` does not confirm that another node received the message; verify reception on a second node.
+OZO does not wait for an acknowledgment, and `status=ok` does not confirm that another node received the message; verify reception on a second node.
 
 ## Upgrading
 Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.

@@ -1171,8 +1171,7 @@ def send_messages(mcfg, texts, attempts, delay):
                 while sent < len(texts):
                     if sent:
                         time.sleep(3)  # leave airtime between consecutive messages
-                    iface.sendText(texts[sent], wantAck=True, channelIndex=mcfg.get("channel_index", 0),
-                                   onResponse=iface.localNode.onAckNak)
+                    iface.sendText(texts[sent], channelIndex=mcfg.get("channel_index", 0))
                     log.info("broadcast: %s", texts[sent])
                     sent += 1
             finally:

@@ -5,14 +5,12 @@ import ozo_meshtastic_tw as app
 
 
 class SendMessagesTests(unittest.TestCase):
-    def test_broadcast_uses_cli_ack_options(self):
+    def test_broadcast_uses_default_send_options(self):
         iface = Mock()
         with patch.object(app, "open_interface", return_value=iface):
             app.send_messages({"channel_index": 2}, ["first"], 1, 0)
 
-        iface.sendText.assert_called_once_with(
-            "first", wantAck=True, channelIndex=2, onResponse=iface.localNode.onAckNak
-        )
+        iface.sendText.assert_called_once_with("first", channelIndex=2)
         iface.close.assert_called_once_with()
 
     def test_retry_does_not_resend_submitted_messages(self):
@@ -23,12 +21,10 @@ class SendMessagesTests(unittest.TestCase):
             app.send_messages({}, ["first", "second"], 2, 0)
 
         self.assertEqual(first.sendText.call_args_list, [
-            call("first", wantAck=True, channelIndex=0, onResponse=first.localNode.onAckNak),
-            call("second", wantAck=True, channelIndex=0, onResponse=first.localNode.onAckNak),
+            call("first", channelIndex=0),
+            call("second", channelIndex=0),
         ])
-        second.sendText.assert_called_once_with(
-            "second", wantAck=True, channelIndex=0, onResponse=second.localNode.onAckNak
-        )
+        second.sendText.assert_called_once_with("second", channelIndex=0)
         first.close.assert_called_once_with()
         second.close.assert_called_once_with()
 

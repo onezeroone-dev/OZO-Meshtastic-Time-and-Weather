@@ -1148,7 +1148,7 @@ def record_send(cfg):
 def send_messages(mcfg, texts, attempts, delay):
     """
     DESCRIPTION
-    Sends the messages in order, reconnecting and retrying on failure without resending delivered messages.
+    Sends the messages in order, reconnecting and retrying on failure without resending submitted messages.
 
     PARAMETERS
     mcfg: The "meshtastic" section of the configuration.
@@ -1167,11 +1167,12 @@ def send_messages(mcfg, texts, attempts, delay):
             # Open the radio
             iface = open_interface(mcfg)
             try:
-                # Send the messages that have not been delivered
+                # Send the messages that have not been submitted
                 while sent < len(texts):
                     if sent:
                         time.sleep(3)  # leave airtime between consecutive messages
-                    iface.sendText(texts[sent], channelIndex=mcfg.get("channel_index", 0))
+                    iface.sendText(texts[sent], wantAck=True, channelIndex=mcfg.get("channel_index", 0),
+                                   onResponse=iface.localNode.onAckNak)
                     log.info("broadcast: %s", texts[sent])
                     sent += 1
             finally:

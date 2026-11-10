@@ -1,7 +1,7 @@
 {
   "meshtastic": {
-    "connection": "tcp",
-    "serial_port": null,
+    "connection": "serial",
+    "serial_port": "/dev/ttyACM0",
     "tcp_host": "localhost",
     "channel_index": 0,
     "max_message_bytes": 200

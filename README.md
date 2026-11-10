@@ -3,53 +3,87 @@
 ## Description
 A service for Linux host that reads the current time from GPS, fetches local weather from the NOAA/NWS API, and broadcasts both on the local Meshtastic mesh on a schedule.
 
-**Compatibility.** The Python service should work on Linux systems that support its Python dependencies and have compatible hardware configured. It gets GPS data from any receiver supported by `gpsd` (the service connects to `gpsd` over TCP and never opens the GPS device). For LoRa, `meshtastic.connection: serial` requires a self-contained Meshtastic device with firmware, attached by serial/USB. Alternatively, `meshtastic.connection: tcp` connects to [`meshtasticd`](https://meshtastic.org/docs/software/linux/), which runs the Meshtastic node software on the Linux host and can control supported SPI or USB radios directly; the radio module itself does not need Meshtastic firmware. Hardware and pinouts must be supported by `meshtasticd`; see its [hardware documentation](https://meshtastic.org/docs/meshtasticd/hardware/). The included `install.sh` is specifically for Debian-based systems that use `apt` and `systemd`; other Linux distributions may need adapted installation steps.
+**Compatibility.** The Python service should work on Linux systems that support its Python dependencies and have compatible hardware configured. It gets GPS data from any receiver supported by `gpsd` (the service connects to `gpsd` over TCP and never opens the GPS device). For LoRa, `meshtastic.connection: serial` connects to a self-contained Meshtastic device with firmware over serial/USB. Alternatively, `meshtastic.connection: tcp` connects to [`meshtasticd`](https://meshtastic.org/docs/software/linux/), which runs the Meshtastic node software on the Linux host and can control supported SPI or USB radios directly; the radio module itself does not need Meshtastic firmware. Hardware and pinouts must be supported by `meshtasticd`; see its [hardware documentation](https://meshtastic.org/docs/meshtasticd/hardware/). The included `install.sh` is specifically for Debian-based systems that use `apt` and `systemd`; other Linux distributions may need adapted installation steps.
 
 **Region.** Weather and alerts come from the NOAA/NWS API, which covers the United States and its territories only. Elsewhere the weather fields are unavailable; the time, sun and moon fields still work.
 
-**Tested hardware.** The project has been tested only with the [Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/sx1262-lorawan-hat.htm?sku=24654) (non-sponsored link), on a Raspberry Pi Zero W v1.1 running 32-bit Raspberry Pi OS (Debian Trixie). Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages, and advise using the `CLIENT_MUTE` role if it is used, to avoid rebroadcasting. **Testing found that this HAT is not suitable for this service:** `check_radios.py` and `--check` pass, `meshtasticd` accepts the broadcasts (`status=ok`), and a plain 40-character `meshtastic --sendtext` message reached a second node, but messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and the node's NodeInfo packets did not, and the daemon logged `error=-7` receive failures. The `status=ok` result only means the daemon accepted the packet, so confirm reception on a second node. Other Linux systems and hardware that meet the compatibility requirements should work but have not been verified; reports are welcome.
+**Hardware status.** The previous test setup was a [Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/sx1262-lorawan-hat.htm?sku=24654) on a Raspberry Pi Zero W v1.1 running 32-bit Raspberry Pi OS (Debian Trixie). Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages. In testing, `check_radios.py` and `--check` passed and `meshtasticd` accepted broadcasts (`status=ok`), but only a 40-character plain text message reached a second node; messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and NodeInfo packets did not, and the daemon logged `error=-7` receive failures. The `status=ok` result only means the daemon accepted a packet, so confirm reception on a second node. This HAT was returned and is not considered suitable for this service. The next radio under test is the [Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html), connected by USB serial; it has been detected as `/dev/ttyACM0`, but end-to-end broadcasts have not yet been verified. The planned GNSS receiver is the [Waveshare L76K GPS HAT](https://www.waveshare.com/l76k-gps-hat.htm); it has not yet been tested with this service.
 
-Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
+Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [USB/Serial Radios](#usbserial-radios) · [SPI Radios](#spi-radios) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
 
 ## Prerequisites and hardware setup
 Complete these before running `install.sh`. Device names and setup steps depend on your Linux distribution and hardware; adapt the examples.
-1. **GPS serial port.** If the GNSS receiver uses the host's UART, enable that serial port and disable any login shell using it. On Raspberry Pi OS, use `sudo raspi-config` → Interface Options → Serial Port. Reboot afterwards if required. On the tested Raspberry Pi/HAT, the GPS is at `/dev/ttyS0`.
-2. **gpsd.** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at your GNSS device (on the tested hardware, set `DEVICES="/dev/ttyS0"` in `/etc/default/gpsd`; `GPSD_OPTIONS="-n"` starts polling without waiting for a client), then restart gpsd using your system's service manager. Confirm with `gpsmon` or `cgps`: you should see a 3D fix and a UTC time. Use a clear view of the sky; a first fix can take several minutes.
-3. **LoRa radio.** How it attaches decides the connection type. A radio running Meshtastic firmware over USB serial works with `meshtastic.connection: serial`. An SPI HAT driven by the Linux host itself needs [`meshtasticd`](https://meshtastic.org/docs/software/linux/) running, with `meshtastic.connection: tcp`. See Meshtastic's documentation for [installation](https://meshtastic.org/docs/meshtasticd/installation/raspbian/) and [configuration](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/) examples for Raspberry Pi.
-4. **Meshtastic settings.** The tested Waveshare HAT uses `meshtasticd` on the same host.
-   - Enable SPI on the Linux host and ensure the HAT's SPI, GPIO, and other required pins are configured correctly. On Raspberry Pi OS, see Meshtastic's [Raspberry Pi hardware instructions](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/).
-   - Install `meshtasticd` for your Linux distribution. Find the radio's matching preset under `/etc/meshtasticd/available.d` and copy it into `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). The preset must match the HAT and its pinout; do not select one based only on the SX1262 chip. Run the daemon with permission to access SPI, GPIO, and other required interfaces.
-   - Start `meshtasticd` and confirm it is listening on its local TCP API (default port 4403). The commands below assume the daemon is on this host at `localhost`; change the host if needed.
-   - **Set the LoRa region.** This is required: a new node has the region `UNSET` and will not transmit until one is chosen. Use the code for your location (for example `US`, `EU_868`, `ANZ`; see the [Meshtastic region list](https://meshtastic.org/docs/configuration/radio/lora/#region)). The node reboots when the region changes, so wait about 10 seconds before the next command:
+1. **GNSS serial port.** If the receiver uses the host UART, enable that serial port and disable any login shell using it. On Raspberry Pi OS, use `sudo raspi-config` → Interface Options → Serial Port, then reboot if required. The planned L76K GPS HAT provides UART and USB-to-UART options; use its selector jumper to choose the connection and identify the resulting device path on the Pi.
+2. **gpsd.** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at the GNSS device selected above (for example, `/dev/ttyS0` for a configured Raspberry Pi UART, or the discovered `/dev/ttyUSB*` device for a USB-to-UART connection). In `/etc/default/gpsd`, `GPSD_OPTIONS="-n"` starts polling without waiting for a client. Restart gpsd and confirm with `gpsmon` or `cgps` that it reports a 3D fix and UTC time. Use a clear view of the sky; a first fix can take several minutes.
+3. **Meshtastic radio.** Choose the setup matching how the radio connects: a self-contained Meshtastic node with firmware over USB serial, or a supported SPI radio controlled by `meshtasticd`. See [USB/Serial Radios](#usbserial-radios) and [SPI Radios](#spi-radios) below.
+4. **Internet access** to `api.weather.gov`.
+5. **Time zone and config.** Decide your `time_zone` and whether to set a fixed `location` (see Configuration).
 
-         meshtastic --host localhost --set lora.region US
-         meshtastic --host localhost --info | grep '"region"'
+## USB/Serial Radios
 
-     The second command should print your region, not `UNSET`.
-   - Set the node's displayed long and short names (replace the examples; the short name is up to four characters):
+Use this setup for a self-contained Meshtastic device that runs Meshtastic firmware and appears as a serial device over USB. The selected Seeed XIAO nRF52840 & Wio-SX1262 kit comes pre-flashed with Meshtastic firmware. **This connection does not require `meshtasticd` or a YAML file under `/etc/meshtasticd/config.d/`.**
 
-         meshtastic --host localhost --set-owner "Weather Station"
-         meshtastic --host localhost --set-owner-short "WX01"
+Connect the device and list stable USB serial names:
 
-   - Set the public primary channel at index 0 to the usual LongFast settings. `LongFast` is the channel name, `default` is the publicly known default key, and `--ch-longfast` selects the `LONG_FAST` modem preset:
+    ls -l /dev/serial/by-id/
 
-         meshtastic --host localhost --ch-set name LongFast --ch-index 0
-         meshtastic --host localhost --ch-set psk default --ch-index 0
-         meshtastic --host localhost --ch-longfast
+If that directory has no matching entry, compare `ls /dev/ttyACM* /dev/ttyUSB*` before and after connecting the device. The Seeed kit was detected as `/dev/ttyACM0` on the current Pi. Prefer a `/dev/serial/by-id/...` path in the config when one is available, since a numbered `/dev/ttyACM*` path can change.
 
-     These settings and the LoRa region must match the nodes you want to communicate with. The `channel_index` in this service's config must be `0` to broadcast on this primary channel.
-   - Set the node role to `CLIENT_MUTE` as recommended by the [Meshtastic hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/):
+Set `meshtastic.connection` to `serial` and `meshtastic.serial_port` to the discovered device path. Ensure the service can access it; the systemd unit runs with group `dialout`. For example:
 
-         meshtastic --host localhost --set device.role CLIENT_MUTE
+    "connection": "serial",
+    "serial_port": "/dev/ttyACM0"
 
-     The node name, channel, region, and role are persistent Meshtastic settings, not OZO service settings. `CLIENT_MUTE` still allows this service to send its own broadcasts; it prevents the node from rebroadcasting other nodes' traffic. The default example config uses `connection: "tcp"`, `tcp_host: "localhost"`, and `channel_index: 0`.
-5. **Internet access** to `api.weather.gov`.
-6. **Time zone and config.** Decide your `time_zone` and whether to set a fixed `location` (see Configuration).
+Configure the node with the Meshtastic CLI, using the same port for each command (replace it with your discovered path). These are persistent node settings, separate from the OZO config:
+
+- Set the region required for your location. A new node with region `UNSET` cannot communicate over LoRa. The node reboots after changing region; wait for it to reconnect. See the [Meshtastic region list](https://meshtastic.org/docs/configuration/radio/lora/#region).
+
+      meshtastic --port /dev/ttyACM0 --set lora.region US
+      meshtastic --port /dev/ttyACM0 --info | grep '"region"'
+
+- Set the long and short names; the short name is up to four characters:
+
+      meshtastic --port /dev/ttyACM0 --set-owner "Weather Station"
+      meshtastic --port /dev/ttyACM0 --set-owner-short "WX01"
+
+- Configure the public primary LongFast channel at index 0. `default` is the publicly known default key; `--ch-longfast` sets the modem preset:
+
+      meshtastic --port /dev/ttyACM0 --ch-set name LongFast --ch-index 0
+      meshtastic --port /dev/ttyACM0 --ch-set psk default --ch-index 0
+      meshtastic --port /dev/ttyACM0 --ch-longfast
+
+The LoRa region, channel key and modem preset must match the other mesh nodes. Set `channel_index` to `0` in this service config to use the primary channel. Check settings with `meshtastic --port /dev/ttyACM0 --info` before testing. Do not use the `CLIENT_MUTE` role solely because it was recommended for the previous Waveshare HAT; that recommendation was specific to its hardware limitation.
+
+## SPI Radios
+
+Use this setup when the Linux host directly controls an SPI-attached radio. In this arrangement `meshtasticd` runs the Meshtastic node software on the host; the radio module itself does not need Meshtastic firmware. Configure this service with `meshtastic.connection: tcp` and the `tcp_host` of the daemon (typically `localhost` when they run on the same Pi). No USB serial port is used by the OZO service.
+
+Enable SPI and configure the radio's SPI, GPIO and other required pins. Install `meshtasticd` for your distribution. Find the preset that matches the exact radio board and pinout in `/etc/meshtasticd/available.d`, then copy that preset to `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). Do not select a preset based only on the radio chip; a mismatched pinout will not work. Start the daemon and confirm its TCP API is reachable on the default port 4403. See Meshtastic's [Raspberry Pi hardware instructions](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/).
+
+Configure the node through the Meshtastic CLI connected to the daemon. These are persistent node settings, separate from the OZO config:
+
+- Set the region required for your location. A new node with region `UNSET` cannot communicate over LoRa. The node reboots after changing region; wait for it to reconnect. See the [Meshtastic region list](https://meshtastic.org/docs/configuration/radio/lora/#region).
+
+      meshtastic --host localhost --set lora.region US
+      meshtastic --host localhost --info | grep '"region"'
+
+- Set the long and short names; the short name is up to four characters:
+
+      meshtastic --host localhost --set-owner "Weather Station"
+      meshtastic --host localhost --set-owner-short "WX01"
+
+- Configure the public primary LongFast channel at index 0. `default` is the publicly known default key; `--ch-longfast` sets the modem preset:
+
+      meshtastic --host localhost --ch-set name LongFast --ch-index 0
+      meshtastic --host localhost --ch-set psk default --ch-index 0
+      meshtastic --host localhost --ch-longfast
+
+The LoRa region, channel key and modem preset must match the other mesh nodes. Set `channel_index` to `0` in this service config to use the primary channel. Check settings with `meshtastic --host localhost --info` before testing. Only set a role such as `CLIENT_MUTE` when appropriate for the specific radio hardware and network behavior.
 
 ## Configuration
 Copy `config.example.json` to `config.json`:
-- `meshtastic`: `connection` (`serial` for a self-contained Meshtastic device or `tcp` for `meshtasticd`; the example uses TCP for the tested SPI HAT), `serial_port` (null = autodetect), `tcp_host`, `channel_index`, `max_message_bytes` (message is truncated to this many UTF-8 bytes; default 200).
-- `gps`: gpsd host/port and fix timeout. The physical GPS serial device is configured in gpsd, not this file (`/dev/ttyS0` on the tested hardware).
+- `meshtastic`: `connection` (`serial` for a self-contained Meshtastic device or `tcp` for `meshtasticd`; the example uses the selected USB/serial radio), `serial_port` (null = autodetect; set the discovered port for predictable selection), `tcp_host`, `channel_index`, `max_message_bytes` (message is truncated to this many UTF-8 bytes; default 200).
+- `gps`: gpsd host/port and fix timeout. The physical GNSS serial device is configured in gpsd, not this file.
 - `location`: optional fixed latitude/longitude; if null, the GPS position is used.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `message`: controls the broadcast content.
@@ -126,7 +160,7 @@ Guidance:
 - **GPS:** the service never opens the GPS device. It connects to `gpsd` over TCP (default port 2947) as a client, so other gpsd clients (`cgps`, `gpsmon`, etc.) can run at the same time.
 - **LoRa (serial mode):** the Meshtastic library opens the serial port with an exclusive lock (`flock`). The service holds it only while broadcasting: it connects, sends one message, and disconnects. Between broadcasts (hourly by default) the port is free.
 - **Conflicts:** if another program (Meshtastic CLI or app, a monitor, etc.) has the port open when a broadcast fires, the send fails with "Could not exclusively lock port". It is retried per the `retry` setting; if every attempt fails it is logged and the next scheduled broadcast tries again. Likewise, a tool you start during a broadcast will fail to open the port for a few seconds.
-- **Always-on clients:** if something must keep the radio open continuously, run `meshtasticd` and set `meshtastic.connection` to `tcp` (with `tcp_host`) so multiple clients can share it.
+- **Always-on clients:** the USB/serial connection is exclusive. If another client must keep a radio open continuously, use a radio and hardware setup supported by `meshtasticd`, then configure this service to connect to its TCP API.
 - **Separate ports:** `gpsd` and the Meshtastic serial port must use different device nodes. If more than one Meshtastic device is attached, set `meshtastic.serial_port` explicitly rather than relying on autodetect.
 - `install.sh` runs `check_radios.py` before installing the service, so it briefly opens the radio at that time; stop other radio clients before installing.
 
@@ -177,7 +211,7 @@ Stops and removes the service, `/opt/ozo-meshtastic-tw`, and the `ozo-meshtastic
 - **System clock.** The schedule and duplicate guard use the Pi's system clock. A Pi without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
 - **Sun and moon** are calculated locally with standard approximations: sunrise and sunset are accurate to within about a couple of minutes, moon phase to the nearest eighth of the cycle.
 - **Fields are US units** (°F, mph, hPa).
-- **Tested on one hardware setup, which did not work.** See "Tested hardware" above: the Waveshare HAT could not deliver full-length broadcasts, so the project has not yet been verified end to end. On different hardware, run `check_radios.py`, `--check` and `--dry-run` before relying on it.
+- **End-to-end hardware validation is pending.** The previous Waveshare setup could not deliver full-length broadcasts, and the selected Seeed USB/serial radio has not yet been verified with this service. Run `check_radios.py`, `--check` and `--dry-run`, then confirm a real broadcast on a second node before relying on a new hardware setup.
 
 ## Mesh etiquette and airtime
 LoRa airtime is shared by every node on the channel, and every broadcast is heard by all of them. Use a sensible interval (the example config broadcasts hourly from 06:00 through 21:00; avoid going much faster), consider a dedicated channel or a long interval on busy meshes, and keep `fields` lean. Each message is sent once with a short pause between messages. Use `schedule.broadcast_window` to restrict broadcasts to certain hours, and follow the norms of your local mesh community.

@@ -1,7 +1,7 @@
 # OZO Meshtastic Time and Weather
 
 ## Description
-A service for Linux host that reads the current time from GPS, fetches local weather from the NOAA/NWS API, and broadcasts both on the local Meshtastic mesh on a schedule.
+A service for Linux host that reads the current time from GPS, fetches local weather from the NOAA/NWS API, and broadcasts both on the local Meshtastic mesh on a schedule. In the absence of a GPS signal (or radio), it can fall back to the system time and a user-configured fixed location.
 
 **Compatibility.** The Python service should work on Linux systems that support its Python dependencies and have compatible hardware configured. It gets GPS data from any receiver supported by `gpsd` (the service connects to `gpsd` over TCP and never opens the GPS device). For LoRa, `meshtastic.connection: serial` connects to a self-contained Meshtastic device with firmware over serial/USB. Alternatively, `meshtastic.connection: tcp` connects to [`meshtasticd`](https://meshtastic.org/docs/software/linux/), which runs the Meshtastic node software on the Linux host and can control supported SPI or USB radios directly; the radio module itself does not need Meshtastic firmware. Hardware and pinouts must be supported by `meshtasticd`; see its [hardware documentation](https://meshtastic.org/docs/meshtasticd/hardware/). The included `install.sh` is specifically for Debian-based systems that use `apt` and `systemd`; other Linux distributions may need adapted installation steps.
 

@@ -124,6 +124,10 @@ def load_config(path):
     retry = cfg.get("retry", {})
     if int(retry.get("attempts", 3)) < 1 or float(retry.get("delay_seconds", 5)) < 0:
         raise ValueError("retry.attempts must be >= 1 and retry.delay_seconds >= 0")
+    # Validate the post-send connection hold time
+    hold = cfg.get("meshtastic", {}).get("post_send_delay_seconds", 5)
+    if isinstance(hold, bool) or not isinstance(hold, (int, float)) or not math.isfinite(hold) or hold < 0:
+        raise ValueError("meshtastic.post_send_delay_seconds must be a finite non-negative number")
     # Return
     return cfg
 
@@ -1166,17 +1170,23 @@ def send_messages(mcfg, texts, attempts, delay):
         try:
             # Open the radio
             iface = open_interface(mcfg)
+            submitted = False
             try:
                 # Send the messages that have not been submitted
                 while sent < len(texts):
                     if sent:
                         time.sleep(3)  # leave airtime between consecutive messages
                     iface.sendText(texts[sent], channelIndex=mcfg.get("channel_index", 0))
-                    log.info("broadcast: %s", texts[sent])
+                    submitted = True
                     sent += 1
+                    log.info("broadcast: %s", texts[sent - 1])
             finally:
-                # Close the radio so the port lock is released
-                iface.close()
+                try:
+                    if submitted:
+                        time.sleep(mcfg.get("post_send_delay_seconds", 5))
+                finally:
+                    # Close the radio so the port lock is released
+                    iface.close()
             # Everything was sent
             return
         except Exception as exc:

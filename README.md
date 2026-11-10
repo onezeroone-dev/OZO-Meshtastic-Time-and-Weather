@@ -7,8 +7,6 @@ A service for Linux host that reads the current time from GPS, fetches local wea
 
 **Region.** Weather and alerts come from the NOAA/NWS API, which covers the United States and its territories only. Elsewhere the weather fields are unavailable; the time, sun and moon fields still work.
 
-**Hardware status.** The previous test setup was a [Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/sx1262-lorawan-hat.htm?sku=24654) on a Raspberry Pi Zero W v1.1 running 32-bit Raspberry Pi OS (Debian Trixie). Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages. In testing, `check_radios.py` and `--check` passed and `meshtasticd` accepted broadcasts (`status=ok`), but only a 40-character plain text message reached a second node; messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and NodeInfo packets did not, and the daemon logged `error=-7` receive failures. The `status=ok` result only means the daemon accepted a packet, so confirm reception on a second node. This HAT was returned and is not considered suitable for this service. The next radio under test is the [Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://www.seeedstudio.com/XIAO-nRF52840-Wio-SX1262-Kit-for-Meshtastic-p-6400.html), connected by USB serial; it has been detected as `/dev/ttyACM0`, but end-to-end broadcasts have not yet been verified. The planned GNSS receiver is the [Waveshare L76K GPS HAT](https://www.waveshare.com/l76k-gps-hat.htm); it has not yet been tested with this service.
-
 Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [USB/Serial Radios](#usbserial-radios) · [SPI Radios](#spi-radios) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
 
 ## Prerequisites and hardware setup
@@ -163,6 +161,18 @@ Guidance:
 - **Always-on clients:** the USB/serial connection is exclusive. If another client must keep a radio open continuously, use a radio and hardware setup supported by `meshtasticd`, then configure this service to connect to its TCP API.
 - **Separate ports:** `gpsd` and the Meshtastic serial port must use different device nodes. If more than one Meshtastic device is attached, set `meshtastic.serial_port` explicitly rather than relying on autodetect.
 - `install.sh` runs `check_radios.py` before installing the service, so it briefly opens the radio at that time; stop other radio clients before installing.
+
+## Hardware and Software Testing
+For best results, use [Meshtastic-supported hardware](https://meshtastic.org/docs/hardware/devices/). The following hardware and software combinations have been tested with varying results. Reports are welcome.
+
+
+|Computer|Operating System|Meshtastic/LoRa Radio|M/L Radio Connection|GPS Radio|GPS Radio Connection|Requires `meshtasticd`|Recommended|
+|--------|----------------|---------------------|--------------------|---------|--------------------|----------------------|-----------|
+|Raspberry Pi Zero W v1.1|Raspberry Pi OS (32-bit, Debian Trixie)|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/sx1262-lorawan-hat.htm?sku=24654)|SPI|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/sx1262-lorawan-hat.htm?sku=24654)|UART|Yes|No|
+|Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages. In testing, `check_radios.py` and `--check` passed and `meshtasticd` accepted broadcasts (`status=ok`), but only a 40-character plain text message reached a second node; messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and NodeInfo packets did not, and the daemon logged `error=-7` receive failures. The `status=ok` result only means the daemon accepted a packet, so confirm reception on a second node. This HAT is not considered suitable for this service.|
+|Raspberry Pi Zero W v1.1|Raspberry Pi OS (32-bit, Debian Trixie)|[Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://wiki.seeedstudio.com/xiao_nrf52840&_wio_SX1262_kit_for_meshtastic/)|
+
+ The next radio under test is the [Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://wiki.seeedstudio.com/xiao_nrf52840&_wio_SX1262_kit_for_meshtastic/), connected by USB serial; it has been detected as `/dev/ttyACM0`, but end-to-end broadcasts have not yet been verified. The planned GNSS receiver is the [Waveshare L76K GPS HAT](https://www.waveshare.com/l76k-gps-hat.htm); it has not yet been tested with this service.
 
 ## Logging and troubleshooting
 **How logging works.** The service writes plain-text lines to stderr, which systemd captures in the journal. Each line starts with its level (`INFO`, `WARNING` or `ERROR`). The level is part of the message text, not the journal priority, so `journalctl -p warning` will not filter them; use grep instead:

@@ -1,9 +1,11 @@
 {
   "meshtastic": {
     "connection": "serial",
-    "serial_port": null,
+    "serial_port": "/dev/ttyACM0",
     "tcp_host": "localhost",
-    "channel_index": 0
+    "channel_index": 0,
+    "max_message_bytes": 200,
+    "post_send_delay_seconds": 5
   },
   "gps": {
     "gpsd_host": "127.0.0.1",
@@ -11,17 +13,49 @@
     "timeout_seconds": 15
   },
   "location": {
-    "latitude": null,
-    "longitude": null
+    "latitude": 39.7392,
+    "longitude": -104.9903
   },
   "noaa": {
+    "api_url": "https://api.weather.gov",
     "api_key": "",
     "user_agent": "OZO-Meshtastic-Time-and-Weather (you@example.com)",
     "timeout_seconds": 20
   },
+  "message": {
+    "fields": [
+      "time",
+      "time_sync",
+      "conditions",
+      "precip",
+      "high_low",
+      "observation",
+      "outlook",
+      "sun",
+      "moon",
+      "next_broadcast"
+    ],
+    "alerts": "separate",
+    "compact": true,
+    "alert_filter": {
+      "min_severity": "Minor",
+      "include": [],
+      "exclude": []
+    },
+    "max_observation_age_minutes": 120
+  },
   "schedule": {
     "interval_minutes": 60,
-    "times": []
+    "times": [],
+    "broadcast_window": {
+      "start": "06:00",
+      "end": "22:00"
+    },
+    "min_interval_seconds": 300
+  },
+  "retry": {
+    "attempts": 3,
+    "delay_seconds": 5
   },
   "time_zone": "UTC"
 }

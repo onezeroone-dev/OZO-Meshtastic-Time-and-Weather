@@ -1,21 +1,29 @@
 # OZO Meshtastic Time and Weather
 
 ## Description
-A service for Linux host that reads the current time from GPS, fetches local weather from the NOAA/NWS API, and broadcasts both on the local Meshtastic mesh on a schedule. In the absence of a GPS signal (or radio), it falls back to the system time and a user-configured fixed location.
+A service for a Linux host that reads the current time from GPS, fetches local weather from the NOAA/NWS API, and broadcasts both on the local Meshtastic mesh on a schedule. If GPS time is unavailable and both fixed coordinates are configured, it falls back to the system clock and uses the fixed location.
 
 **Compatibility.** The Python service should work on Linux systems that support its Python dependencies and have compatible hardware configured. It gets GPS data from any receiver supported by `gpsd` (the service connects to `gpsd` over TCP and never opens the GPS device). For LoRa, `meshtastic.connection: serial` connects to a self-contained Meshtastic device with firmware over serial/USB. Alternatively, `meshtastic.connection: tcp` connects to [`meshtasticd`](https://meshtastic.org/docs/software/linux/), which runs the Meshtastic node software on the Linux host and can control supported SPI or USB radios directly; the radio module itself does not need Meshtastic firmware. Hardware and pinouts must be supported by `meshtasticd`; see its [hardware documentation](https://meshtastic.org/docs/meshtasticd/hardware/). The included `install.sh` is specifically for Debian-based systems that use `apt` and `systemd`; other Linux distributions may need adapted installation steps.
 
 **Region.** Weather and alerts come from the NOAA/NWS API, which covers the United States and its territories only. Elsewhere the weather fields are unavailable; the time, sun and moon fields still work.
 
-Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [USB/Serial Radios](#usbserial-radios) · [SPI Radios](#spi-radios) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
+Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [USB/Serial Radios](#usbserial-radios) · [SPI Radios](#spi-radios) · [Configuration](#configuration) · [Example output](#example-output) · [Run manually](#run-manually-venv) · [Install](#install-as-a-service) · [Upgrading](#upgrading) · [Checking the radios](#checking-the-radios-check_radiospy) · [Device access](#device-access-and-locking) · [Tested hardware](#hardware-and-software-testing) · [Troubleshooting](#logging-and-troubleshooting) · [Uninstall](#uninstall) · [Limitations](#limitations) · [Mesh etiquette](#mesh-etiquette-and-airtime) · [Security](#security-notes) · [Development](#development-notes) · [License](#license) · [Attribution](#attribution)
 
 ## Prerequisites and hardware setup
 Complete these before running `install.sh`. Device names and setup steps depend on your Linux distribution and hardware; adapt the examples.
-1. **GNSS serial port.** If the receiver uses the host UART, enable that serial port and disable any login shell using it. On Raspberry Pi OS, use `sudo raspi-config` → Interface Options → Serial Port, then reboot if required.
-2. **gpsd.** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at the GNSS device selected above (for example, `/dev/ttyS0` for a configured Raspberry Pi UART, or the discovered `/dev/ttyUSB*` device for a USB-to-UART connection). In `/etc/default/gpsd`, `GPSD_OPTIONS="-n"` starts polling without waiting for a client. Restart gpsd and confirm with `gpsmon` or `cgps` that it reports a 3D fix and UTC time. Use a clear view of the sky; a first fix can take several minutes.
+1. **GNSS serial port (optional).** If using a GNSS receiver on the host UART, enable that serial port and disable any login shell using it. Follow the host's instructions and reboot if required. A receiver is optional when both fixed coordinates are configured.
+2. **gpsd (if using GNSS).** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at the discovered GNSS device, for example a UART or USB-to-UART device. On distributions using `/etc/default/gpsd`, `GPSD_OPTIONS="-n"` starts polling without waiting for a client. Restart gpsd and confirm with `gpsmon` or `cgps` that it reports a 3D fix and UTC time. Use a clear view of the sky; a first fix can take several minutes.
 3. **Meshtastic radio.** Choose the setup matching how the radio connects: a self-contained Meshtastic node with firmware over USB serial, or a supported SPI radio controlled by `meshtasticd`. See [USB/Serial Radios](#usbserial-radios) and [SPI Radios](#spi-radios) below.
 4. **Internet access** to `api.weather.gov`.
-5. **Time zone and config.** Decide your `time_zone` and whether to set a fixed `location` (see Configuration).
+5. **Time zone and config.** Set your `time_zone`, coordinates and NOAA contact information (see Configuration).
+
+The radio setup examples below use the Meshtastic CLI, which can be installed in a separate virtual environment:
+
+    python3 -m venv ~/meshtastic-cli-venv
+    ~/meshtastic-cli-venv/bin/pip install "meshtastic[cli]"
+    . ~/meshtastic-cli-venv/bin/activate
+
+The CLI must have access to the serial device or daemon. Its `--info` output can include private keys; do not share the full output publicly.
 
 ## USB/Serial Radios
 
@@ -50,11 +58,11 @@ Configure the node with the Meshtastic CLI, using the same port for each command
       meshtastic --port /dev/ttyACM0 --ch-set psk default --ch-index 0
       meshtastic --port /dev/ttyACM0 --ch-longfast
 
-The LoRa region, channel key and modem preset must match the other mesh nodes. Set `channel_index` to `0` in this service config to use the primary channel. Check settings with `meshtastic --port /dev/ttyACM0 --info` before testing. Do not use the `CLIENT_MUTE` role solely because it was recommended for the previous Waveshare HAT; that recommendation was specific to its hardware limitation.
+The LoRa region, channel key and modem preset must match the other mesh nodes. Set `channel_index` to `0` in this service config to use the primary channel. Check settings with `meshtastic --port /dev/ttyACM0 --info` before testing. Choose a node role appropriate for the hardware and network.
 
 ## SPI Radios
 
-Use this setup when the Linux host directly controls an SPI-attached radio. In this arrangement `meshtasticd` runs the Meshtastic node software on the host; the radio module itself does not need Meshtastic firmware. Configure this service with `meshtastic.connection: tcp` and the `tcp_host` of the daemon (typically `localhost` when they run on the same Pi). No USB serial port is used by the OZO service.
+Use this setup when the Linux host directly controls an SPI-attached radio. In this arrangement `meshtasticd` runs the Meshtastic node software on the host; the radio module itself does not need Meshtastic firmware. Configure this service with `meshtastic.connection: tcp` and the `tcp_host` of the daemon (typically `localhost` when they run on the same host). No USB serial port is used by the OZO service.
 
 Enable SPI and configure the radio's SPI, GPIO and other required pins. Install `meshtasticd` for your distribution. Find the preset that matches the exact radio board and pinout in `/etc/meshtasticd/available.d`, then copy that preset to `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). Do not select a preset based only on the radio chip; a mismatched pinout will not work. Start the daemon and confirm its TCP API is reachable on the default port 4403.
 
@@ -80,11 +88,11 @@ The LoRa region, channel key and modem preset must match the other mesh nodes. S
 
 ## Configuration
 Copy `config.example.json` to `config.json`:
-- `meshtastic`: `connection` (`serial` for a self-contained Meshtastic device or `tcp` for `meshtasticd`; the example uses the selected USB/serial radio), `serial_port` (null = autodetect; set the discovered port for predictable selection), `tcp_host`, `channel_index`, `max_message_bytes` (message is truncated to this many UTF-8 bytes; default 200), and `post_send_delay_seconds` (default 5; a non-negative number of seconds to keep the connection open after the last submitted message; set to 0 for no delay).
+- `meshtastic`: `connection` (`serial` for a self-contained Meshtastic device or `tcp` for `meshtasticd`; the example uses serial), `serial_port` (null = autodetect; set the discovered port for predictable selection), `tcp_host`, `channel_index`, `max_message_bytes` (UTF-8 byte limit; default 200), and `post_send_delay_seconds` (default 5; a non-negative number of seconds to keep the connection open after the last submitted message; set to 0 for no delay).
 
   The post-send delay gives the radio time to queue messages before disconnecting; in some setups this may help with delayed delivery. It is a precaution, not a confirmed fix or a guarantee of queueing or delivery. The radio connection remains occupied during the delay. Existing configurations that omit the setting also use the five-second default.
 - `gps`: gpsd host/port and fix timeout. The physical GNSS serial device is configured in gpsd, not this file.
-- `location`: optional fixed latitude/longitude; if null, the GPS position is used. **Setting both also makes the GPS optional**: if gpsd is unreachable or has no fix, the service still broadcasts, using the system clock (the time-sync field reads `SYSTEM CLOCK-NOT GPS`) and the fixed location for weather and sun times. This allows a low-cost build with just e.g., a Raspberry Pi Zero and a radio. Keep the system clock accurate (NTP) in that case, because there is no GPS time to correct it. `--check` reports the missing GPS as a warning rather than a failure.
+- `location`: fixed latitude/longitude take precedence over GPS position for weather and sun calculations. The example contains approximate downtown Denver coordinates: replace both with your own, or set both to `null` to use the GPS position. **Setting both also makes GPS time optional**: if gpsd is unreachable or has no fix, the service broadcasts using the system clock (the time-sync field reads `SYSTEM CLOCK-NOT GPS`). Keep the system clock accurate, for example with NTP; `--check` reports the missing GPS as a warning rather than a failure.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `message`: controls the broadcast content.
   - `fields`: ordered list of parts to include (remove or reorder to taste). Valid names: `time`, `time_sync` (shows "GPS time" when the time comes from the GPS), `conditions` (current forecast hour: sky, temperature, wind), `precip` (chance of precipitation), `high_low` (high and low from the daily forecast; after the day's high period has passed this may be tomorrow's), `observation` (latest station observation: temperature, humidity, wind, pressure in hPa with a rising/falling trend when available), `outlook` (next forecast period), `sun` (sunrise and sunset), `moon` (phase and percent illuminated), `next_broadcast` (local time of the next scheduled broadcast; omitted with `--once`).
@@ -117,29 +125,30 @@ This is for running from a checkout, with a `config.json` you copied from `confi
 
 Options (mutually exclusive):
 - `--once`: broadcast once and exit. Ignores the schedule and duplicate guard.
-- `--dry-run`: from an interactive terminal, ignore the schedule, build the message(s) now and print each with its byte count instead of transmitting. It never opens the LoRa radio. If gpsd is unreachable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). Failed NWS lookups are reported. It refuses to run when not attached to a terminal.
-- `--check`: post-install health check of the config, GPS, LoRa radio and NOAA reachability; exits non-zero on any failure. It briefly opens the radio, like `check_radios.py`.
+- `--dry-run`: from an interactive terminal, ignore the schedule, build the message(s) now and print each with its byte count instead of transmitting. It never opens the LoRa radio. If GPS time is unavailable it falls back to the system clock and prints a prominent warning (the time-sync field then reads `SYSTEM CLOCK-NOT GPS`). Failed NWS lookups are reported. It refuses to run when not attached to a terminal.
+- `--check`: post-install health check of the config, GPS, LoRa radio and NOAA reachability. It briefly opens the radio, like `check_radios.py`; missing GPS is a warning if both fixed coordinates are set. Failed checks result in a non-zero exit.
 
 ## Install as a service
     sudo ./install.sh
-The installer is for Debian-based Linux systems using `apt` and `systemd`. It first runs `check_radios.py` as the service user and aborts (without installing the service) if gpsd cannot supply a GPS fix/time or the Meshtastic radio cannot be reached. It uses `/etc/ozo-meshtastic-tw/config.json` (created from the example if absent), so a non-default serial port or gpsd host must be set there first; re-run the installer after fixing any problem. You can run the check on its own with `venv/bin/python check_radios.py --config config.json`.
-The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuration in `/etc/ozo-meshtastic-tw/config.json` (not in `/opt`). The config is readable only by root and the `ozo-meshtastic` group, and `--config` defaults to a `config.json` in the current directory, so run the installed program as the service user and pass the config path explicitly. With the service stopped (the checks open the radio):
+The installer is for Debian-based Linux systems using `apt` and `systemd`. It copies the code, creates a virtual environment and runs `check_radios.py` as the service user before installing the unit. It aborts before installing the unit if the Meshtastic radio cannot be reached, or if GPS is unavailable and both fixed coordinates are not set. A missing GPS is a warning when both coordinates are set. It uses `/etc/ozo-meshtastic-tw/config.json`, created from the example if absent; if a check fails, update that file and re-run the installer. Existing configuration is not overwritten.
+
+The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuration in `/etc/ozo-meshtastic-tw/config.json` (not in `/opt`). A newly installed config is owned by `root:ozo-meshtastic` with mode `0640`. The unit runs as user `ozo-meshtastic`, with primary group `dialout` for serial access and supplementary group `ozo-meshtastic` for config access. `--config` defaults to a `config.json` in the current directory, so pass the installed path explicitly. With the service stopped (the checks open the radio):
 
     sudo systemctl stop ozo-meshtastic-tw
     sudo -u ozo-meshtastic /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json --check
 
 `--dry-run` needs an interactive terminal and may not work under `sudo -u`; if it refuses, run it with `sudo` instead (`sudo /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json --dry-run`).
 
-Edit `/etc/ozo-meshtastic-tw/config.json` (`sudo nano`), then `sudo systemctl start ozo-meshtastic-tw`.
+Edit `/etc/ozo-meshtastic-tw/config.json` (`sudo nano`), especially the location, time zone and NOAA contact, then `sudo systemctl start ozo-meshtastic-tw`. The installer enables the unit at boot but does not start it. Check the service status and journal after starting it; the installer check runs as the same user but does not reproduce the unit's group settings.
 Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summary line you can grep, e.g. `journalctl -u ozo-meshtastic-tw | grep 'broadcast summary'`: `status=ok|partial|skipped|failed` plus message count, byte sizes, time source and any failed NWS lookups (`partial` means some lookups failed). The unit file is `systemd/ozo-meshtastic-tw.service`.
 
 OZO does not wait for an acknowledgment, and `status=ok` does not confirm that another node received the message; verify reception on a second node.
 
 ## Upgrading
-Download the [latest release](https://github.com/onezeroone-dev/OZO-Meshtastic-Time-and-Weather/releases) and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
+Stop the service with `sudo systemctl stop ozo-meshtastic-tw` and close other radio clients before upgrading, because the installer checks the radio. Download the [latest release](https://github.com/onezeroone-dev/OZO-Meshtastic-Time-and-Weather/releases) and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). After a successful install, start the service with `sudo systemctl start ozo-meshtastic-tw` and check its journal.
 
 ## Checking the radios (`check_radios.py`)
-`check_radios.py` verifies that the two radios this service depends on are usable, using the same code paths and settings as the service. It transmits nothing.
+`check_radios.py` checks GPS and the Meshtastic radio using the same connection code and settings as the service. It transmits nothing.
 - **GPS:** connects to gpsd (`gps.gpsd_host`/`gpsd_port`) and waits up to `gps.timeout_seconds` for a fix with a valid time.
 - **LoRa:** opens the Meshtastic radio (serial or `meshtasticd` TCP), reads the node's name, and closes it.
 
@@ -147,7 +156,7 @@ Run it from the repo directory, pointing at the config the service will use:
 
     venv/bin/python check_radios.py --config config.json
 
-It prints `OK` lines on success. For each failure it prints a `FAIL` line with a plain-language hint (for example gpsd not running, no sky view, missing `dialout` group membership, wrong serial port) plus the underlying error, and exits with status 1. Both checks always run, so you see every problem in one pass.
+It prints `OK` lines on success. If GPS is unavailable with both fixed coordinates set, it prints `WARN GPS` and continues; otherwise a GPS failure is reported as `FAIL`. A failed radio check also prints `FAIL` with a hint and the underlying error. Both checks always run, and the script exits with status 1 if either required check fails.
 
 When to use it:
 - Before installing or after changing hardware, ports or `config.json`. `install.sh` runs it automatically and stops on failure.
@@ -156,11 +165,11 @@ When to use it:
 Guidance:
 - Stop other radio clients first (Meshtastic CLI or app, monitors); the serial port is locked while the check runs. See "Device access and locking".
 - The GPS check needs a real fix. Indoors it may time out; test near a window or raise `gps.timeout_seconds`. `gpsmon` or `cgps` show gpsd's view independently.
-- Run it as the service user (the installer does) so a permissions problem shows up here and not at the first broadcast: `sudo -u ozo-meshtastic /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/check_radios.py --config /etc/ozo-meshtastic-tw/config.json`.
+- Run it as the service user (the installer does) to check that user's access: `sudo -u ozo-meshtastic /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/check_radios.py --config /etc/ozo-meshtastic-tw/config.json`. A successful manual check does not guarantee that the systemd unit has the same groups; check service startup too.
 
 ## Device access and locking
 - **GPS:** the service never opens the GPS device. It connects to `gpsd` over TCP (default port 2947) as a client, so other gpsd clients (`cgps`, `gpsmon`, etc.) can run at the same time.
-- **LoRa (serial mode):** the Meshtastic library opens the serial port with an exclusive lock (`flock`). The service holds it only while broadcasting: it connects, sends one message, and disconnects. Between broadcasts (hourly by default) the port is free.
+- **LoRa (serial mode):** the Meshtastic library opens the serial port with an exclusive lock (`flock`). The service holds it while broadcasting: it connects, sends the message or messages, waits for `post_send_delay_seconds`, and disconnects. Between broadcasts the port is free.
 - **Conflicts:** if another program (Meshtastic CLI or app, a monitor, etc.) has the port open when a broadcast fires, the send fails with "Could not exclusively lock port". It is retried per the `retry` setting; if every attempt fails it is logged and the next scheduled broadcast tries again. Likewise, a tool you start during a broadcast will fail to open the port for a few seconds.
 - **Always-on clients:** the USB/serial connection is exclusive. If another client must keep a radio open continuously, use a radio and hardware setup supported by `meshtasticd`, then configure this service to connect to its TCP API.
 - **Separate ports:** `gpsd` and the Meshtastic serial port must use different device nodes. If more than one Meshtastic device is attached, set `meshtastic.serial_port` explicitly rather than relying on autodetect.
@@ -178,14 +187,14 @@ For best results, use [Meshtastic-supported hardware](https://meshtastic.org/doc
 ### Meshtastic/LoRa
 |Device|Connection|Requires `meshtasticd`|Recommended|Comments|
 |------|----------|----------------------|-----------|--------|
-|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/wiki/SX1262_XXXM_LoRaWAN/GNSS_HAT)|SPI|Yes|No|Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages. In testing, `check_radios.py` and `--check` passed and `meshtasticd` accepted broadcasts (`status=ok`), but only a 40-character plain text message reached a second node. Messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and NodeInfo packets did not, and the daemon logged `error=-7` receive failures. The `status=ok` result only means the daemon accepted a packet, so confirm reception on a second node.This HAT is not considered suitable for this service.|
-|[Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://wiki.seeedstudio.com/xiao_nrf52840&_wio_SX1262_kit_for_meshtastic/)|USB/Serial|No|Yes||
+|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/wiki/SX1262_XXXM_LoRaWAN/GNSS_HAT)|SPI|Yes|No|Meshtastic's [Linux hardware notes](https://meshtastic.org/docs/meshtasticd/hardware/) caution that this HAT is not recommended for deployment because of hardware limitations that may affect longer messages. In testing, `check_radios.py` and `--check` passed and `meshtasticd` accepted broadcasts (`status=ok`), but only a 40-character plain text message reached a second node. Messages of 80 characters or more (including this service's roughly 170-byte broadcasts) and NodeInfo packets did not, and the daemon logged `error=-7` receive failures. A successful submission does not confirm reception; this HAT is not considered suitable for this service.|
+|[Seeed XIAO nRF52840 & Wio-SX1262 Meshtastic Kit](https://wiki.seeedstudio.com/xiao_nrf52840&_wio_SX1262_kit_for_meshtastic/)|USB/Serial|No|Yes|Manual and scheduled broadcasts reached a second node. Earlier tests showed intermittent delays; subsequent tests using a five-second post-send delay arrived promptly, but do not establish its cause or guarantee delivery.|
 
 ### GPS
 |Device|Connection|Recommended|Comments|
 |------|----------|-----------|--------|
-|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/wiki/SX1262_XXXM_LoRaWAN/GNSS_HAT)|UART|No|The GNSS radio on this hat works well with `gpsd` but the included LoRa radio is not recommeded for use with this service. See comments in the Meshtastic/LoRa table, above.|
-|[Waveshare L76K GPS HAT](https://www.waveshare.com/wiki/L76K_GPS_HAT)|UART|Yes|Use its selector jumper to choose the connection and identify the resulting device path.|
+|[Waveshare SX1262 LoRa/GNSS HAT](https://www.waveshare.com/wiki/SX1262_XXXM_LoRaWAN/GNSS_HAT)|UART|No|The GNSS receiver worked with `gpsd`, but the included LoRa radio is not recommended for this service. See the Meshtastic/LoRa table above.|
+|[Waveshare L76K GPS HAT](https://www.waveshare.com/wiki/L76K_GPS_HAT)|UART|Yes|A GPS fix and GPS-time broadcast were verified. Use its selector jumper to choose the connection and identify the resulting device path.|
 
 ## Logging and troubleshooting
 **How logging works.** The service writes plain-text lines to stderr, which systemd captures in the journal. Each line starts with its level (`INFO`, `WARNING` or `ERROR`). The level is part of the message text, not the journal priority, so `journalctl -p warning` will not filter them; use grep instead:
@@ -199,7 +208,7 @@ For best results, use [Meshtastic-supported hardware](https://meshtastic.org/doc
 - `ERROR`: `broadcast failed: ...`: the whole cycle failed. The service keeps running and tries again at the next scheduled time.
 - Startup problems (bad config, unknown time zone) end the process with a Python traceback; systemd restarts it every 30 seconds, so the same error repeats in the journal until you fix it. Check `systemctl status ozo-meshtastic-tw`.
 
-**Reading the summary line:** `status=ok` (all sent), `partial` (sent, but some NWS lookups failed; see `failed=`), `skipped` (`reason=duplicate-guard` or `nothing-to-send`; expected, not a fault), `failed` (nothing sent; see `error=`).
+**Reading the summary line:** `status=ok` (all messages submitted), `partial` (messages submitted, but some NWS lookups failed; see `failed=`), `skipped` (`reason=duplicate-guard` or `nothing-to-send`; expected, not a fault), `failed` (the cycle failed; some messages may already have been submitted; see `error=`). Submission does not confirm reception.
 
 **First steps for any problem**
 1. `sudo systemctl status ozo-meshtastic-tw` and the recent journal.
@@ -210,6 +219,7 @@ For best results, use [Meshtastic-supported hardware](https://meshtastic.org/doc
 
 | Log message or symptom | Likely cause and fix |
 |---|---|
+| Startup `PermissionError` opening `/etc/ozo-meshtastic-tw/config.json` | Stop the service to end the restart loop. Check the installed unit's groups with `systemctl show ozo-meshtastic-tw -p User -p Group -p SupplementaryGroups` and inspect path permissions with `namei -l /etc/ozo-meshtastic-tw/config.json`. A newly installed config is `root:ozo-meshtastic` mode `0640`; the unit needs `SupplementaryGroups=ozo-meshtastic` as well as `Group=dialout`. A manual `sudo -u` check can pass with different group settings. Reinstall the current unit, check for overrides with `systemctl cat ozo-meshtastic-tw`, and restart it. |
 | `GPS unavailable (...); using SYSTEM CLOCK` (time field reads `SYSTEM CLOCK-NOT GPS`) | gpsd is stopped or has no fix, and a fixed `location` is set (or this is `--dry-run`), so the system clock was used. Without a fixed location a live broadcast is skipped instead. Check `systemctl status gpsd`, `gpsmon`/`cgps`, antenna view, `gps.*` settings. |
 | `radio send failed (attempt n/m)` with "Could not exclusively lock port" | Another program has the serial port. Close it, or use `meshtasticd` with `connection: tcp`. See "Device access and locking". |
 | `radio send failed` with "Permission denied" | The service user is not in `dialout`, or the wrong `serial_port` is set. |
@@ -234,7 +244,7 @@ Stops and removes the service, `/opt/ozo-meshtastic-tw`, and the `ozo-meshtastic
 - **System clock.** The schedule and duplicate guard use the system clock. A system without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
 - **Sun and moon** are calculated locally with standard approximations: sunrise and sunset are accurate to within about a couple of minutes, moon phase to the nearest eighth of the cycle.
 - **Fields are US units** (°F, mph, hPa).
-- **End-to-end hardware validation is pending.** The previous Waveshare setup could not deliver full-length broadcasts, and the selected Seeed USB/serial radio has not yet been verified with this service. Run `check_radios.py`, `--check` and `--dry-run`, then confirm a real broadcast on a second node before relying on a new hardware setup.
+- **Hardware and delivery vary.** See the tested-hardware tables for results and limitations. Run `check_radios.py`, `--check` and `--dry-run`, then confirm a real broadcast on a second node before relying on a new setup.
 
 ## Mesh etiquette and airtime
 LoRa airtime is shared by every node on the channel, and every broadcast is heard by all of them. Use a sensible interval (the example config broadcasts hourly from 06:00 through 21:00; avoid going much faster), consider a dedicated channel or a long interval on busy meshes, and keep `fields` lean. Each message is sent once with a short pause between messages. Use `schedule.broadcast_window` to restrict broadcasts to certain hours, and follow the norms of your local mesh community.

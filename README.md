@@ -19,13 +19,13 @@ Complete these before running `install.sh`. Device names and setup steps depend 
 
 ## USB/Serial Radios
 
-Use this setup for a self-contained Meshtastic device that runs Meshtastic firmware and appears as a serial device over USB. The selected Seeed XIAO nRF52840 & Wio-SX1262 kit comes pre-flashed with Meshtastic firmware. **This connection does not require `meshtasticd` or a YAML file under `/etc/meshtasticd/config.d/`.**
+Use this setup for a self-contained Meshtastic device that runs Meshtastic firmware and appears as a serial device over USB. **This connection does not require `meshtasticd` or a YAML file under `/etc/meshtasticd/config.d/`.**
 
 Connect the device and list stable USB serial names:
 
     ls -l /dev/serial/by-id/
 
-If that directory has no matching entry, compare `ls /dev/ttyACM* /dev/ttyUSB*` before and after connecting the device. The Seeed kit was detected as `/dev/ttyACM0` on the current Pi. Prefer a `/dev/serial/by-id/...` path in the config when one is available, since a numbered `/dev/ttyACM*` path can change.
+If that directory has no matching entry, compare `ls /dev/ttyACM* /dev/ttyUSB*` before and after connecting the device. Prefer a `/dev/serial/by-id/...` path in the config when one is available, since a numbered `/dev/ttyACM*` path can change.
 
 Set `meshtastic.connection` to `serial` and `meshtastic.serial_port` to the discovered device path. Ensure the service can access it; the systemd unit runs with group `dialout`. For example:
 
@@ -56,7 +56,7 @@ The LoRa region, channel key and modem preset must match the other mesh nodes. S
 
 Use this setup when the Linux host directly controls an SPI-attached radio. In this arrangement `meshtasticd` runs the Meshtastic node software on the host; the radio module itself does not need Meshtastic firmware. Configure this service with `meshtastic.connection: tcp` and the `tcp_host` of the daemon (typically `localhost` when they run on the same Pi). No USB serial port is used by the OZO service.
 
-Enable SPI and configure the radio's SPI, GPIO and other required pins. Install `meshtasticd` for your distribution. Find the preset that matches the exact radio board and pinout in `/etc/meshtasticd/available.d`, then copy that preset to `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). Do not select a preset based only on the radio chip; a mismatched pinout will not work. Start the daemon and confirm its TCP API is reachable on the default port 4403. See Meshtastic's [Raspberry Pi hardware instructions](https://meshtastic.org/docs/meshtasticd/hardware/boards/raspberry-pi/).
+Enable SPI and configure the radio's SPI, GPIO and other required pins. Install `meshtasticd` for your distribution. Find the preset that matches the exact radio board and pinout in `/etc/meshtasticd/available.d`, then copy that preset to `/etc/meshtasticd/config.d` as described in the [meshtasticd configuration guide](https://meshtastic.org/docs/meshtasticd/usage/). Do not select a preset based only on the radio chip; a mismatched pinout will not work. Start the daemon and confirm its TCP API is reachable on the default port 4403.
 
 Configure the node through the Meshtastic CLI connected to the daemon. These are persistent node settings, separate from the OZO config:
 
@@ -84,7 +84,7 @@ Copy `config.example.json` to `config.json`:
 
   The post-send delay gives the radio time to queue messages before disconnecting; in some setups this may help with delayed delivery. It is a precaution, not a confirmed fix or a guarantee of queueing or delivery. The radio connection remains occupied during the delay. Existing configurations that omit the setting also use the five-second default.
 - `gps`: gpsd host/port and fix timeout. The physical GNSS serial device is configured in gpsd, not this file.
-- `location`: optional fixed latitude/longitude; if null, the GPS position is used. **Setting both also makes the GPS optional**: if gpsd is unreachable or has no fix, the service still broadcasts, using the system clock (the time-sync field reads `SYSTEM CLOCK-NOT GPS`) and the fixed location for weather and sun times. This allows a low-cost build with just a Pi and a radio. Keep the Pi's clock accurate (NTP) in that case, because there is no GPS time to correct it. `--check` reports the missing GPS as a warning rather than a failure.
+- `location`: optional fixed latitude/longitude; if null, the GPS position is used. **Setting both also makes the GPS optional**: if gpsd is unreachable or has no fix, the service still broadcasts, using the system clock (the time-sync field reads `SYSTEM CLOCK-NOT GPS`) and the fixed location for weather and sun times. This allows a low-cost build with just e.g., a Raspberry Pi Zero and a radio. Keep the system clock accurate (NTP) in that case, because there is no GPS time to correct it. `--check` reports the missing GPS as a warning rather than a failure.
 - `noaa`: `api_url` (base URL for the NOAA/NWS API), `user_agent` (NOAA asks for a contact string), and optional `api_key` (sent as `X-Api-Key`; the API does not currently require one).
 - `message`: controls the broadcast content.
   - `fields`: ordered list of parts to include (remove or reorder to taste). Valid names: `time`, `time_sync` (shows "GPS time" when the time comes from the GPS), `conditions` (current forecast hour: sky, temperature, wind), `precip` (chance of precipitation), `high_low` (high and low from the daily forecast; after the day's high period has passed this may be tomorrow's), `observation` (latest station observation: temperature, humidity, wind, pressure in hPa with a rising/falling trend when available), `outlook` (next forecast period), `sun` (sunrise and sunset), `moon` (phase and percent illuminated), `next_broadcast` (local time of the next scheduled broadcast; omitted with `--once`).
@@ -136,12 +136,12 @@ Logs: `journalctl -u ozo-meshtastic-tw`. Each broadcast cycle ends with one summ
 OZO does not wait for an acknowledgment, and `status=ok` does not confirm that another node received the message; verify reception on a second node.
 
 ## Upgrading
-Pull or copy the new version of the repository and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
+Download the [latest release](https://github.com/onezeroone-dev/OZO-Meshtastic-Time-and-Weather/releases) and re-run `sudo ./install.sh`. It refreshes the code and Python dependencies in `/opt/ozo-meshtastic-tw` and keeps your existing `/etc/ozo-meshtastic-tw/config.json`, so compare it with the new `config.example.json` for added settings (missing optional keys use defaults). Then `sudo systemctl restart ozo-meshtastic-tw`. The installer runs the radio check again, so stop other radio clients first.
 
 ## Checking the radios (`check_radios.py`)
 `check_radios.py` verifies that the two radios this service depends on are usable, using the same code paths and settings as the service. It transmits nothing.
 - **GPS:** connects to gpsd (`gps.gpsd_host`/`gpsd_port`) and waits up to `gps.timeout_seconds` for a fix with a valid time.
-- **LoRa:** opens the Meshtastic radio (serial or `meshtasticd` TCP, per `meshtastic.*`), reads the node's name, and closes it.
+- **LoRa:** opens the Meshtastic radio (serial or `meshtasticd` TCP), reads the node's name, and closes it.
 
 Run it from the repo directory, pointing at the config the service will use:
 
@@ -231,7 +231,7 @@ Stops and removes the service, `/opt/ozo-meshtastic-tw`, and the `ozo-meshtastic
 - **US coverage only.** The NOAA/NWS API serves the United States and its territories; elsewhere the weather lookups fail (the time, sun and moon fields still work).
 - **Message size.** Messages are limited to `meshtastic.max_message_bytes` (default 200); fields that do not fit are dropped whole, and a single alert message longer than the limit is truncated.
 - **Forecast, not measurement.** Conditions come from NWS gridded forecasts, and the observation is from the nearest reporting station, which may be some distance away.
-- **System clock.** The schedule and duplicate guard use the Pi's system clock. A Pi without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
+- **System clock.** The schedule and duplicate guard use the system clock. A system without a battery-backed RTC that boots offline may have a wrong system clock until it syncs.
 - **Sun and moon** are calculated locally with standard approximations: sunrise and sunset are accurate to within about a couple of minutes, moon phase to the nearest eighth of the cycle.
 - **Fields are US units** (°F, mph, hPa).
 - **End-to-end hardware validation is pending.** The previous Waveshare setup could not deliver full-length broadcasts, and the selected Seeed USB/serial radio has not yet been verified with this service. Run `check_radios.py`, `--check` and `--dry-run`, then confirm a real broadcast on a second node before relying on a new hardware setup.

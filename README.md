@@ -241,7 +241,7 @@ LoRa airtime is shared by every node on the channel, and every broadcast is hear
 
 ## Security notes
 - `/etc/ozo-meshtastic-tw/config.json` is installed root-owned with mode `0640`, readable by the service group only. It may contain the optional NOAA `api_key`.
-- The service runs as the unprivileged `ozo-meshtastic` user (in `dialout` only for serial access), with `NoNewPrivileges`, `ProtectSystem=full` and `ProtectHome` set in the unit file. It only makes outbound HTTPS requests to NOAA and a local connection to gpsd (and `meshtasticd` in TCP mode); it listens on no ports.
+- The service runs as the unprivileged `ozo-meshtastic` user, with `dialout` as its primary group for serial access and `ozo-meshtastic` as a supplementary group for config access. The unit also sets `NoNewPrivileges`, `ProtectSystem=full` and `ProtectHome`. It only makes outbound HTTPS requests to NOAA and a local connection to gpsd (and `meshtasticd` in TCP mode); it listens on no ports.
 - Messages contain time, weather, sun and moon data only; the service never sends your coordinates over the mesh. Coordinates are sent to `api.weather.gov` to look up the forecast. Note that the Meshtastic radio itself may broadcast its position according to its own settings, independent of this service.
 
 ## Development notes

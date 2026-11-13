@@ -12,7 +12,7 @@ Contents: [Prerequisites](#prerequisites-and-hardware-setup) · [USB/Serial Radi
 ## Prerequisites and hardware setup
 Complete these before running `install.sh`. Device names and setup steps depend on your Linux distribution and hardware; adapt the examples.
 1. **GNSS serial port (optional).** If using a GNSS receiver on the host UART, enable that serial port and disable any login shell using it. Follow the host's instructions and reboot if required. A receiver is optional when both fixed coordinates are configured.
-2. **gpsd (if using GNSS).** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at the discovered GNSS device, for example a UART or USB-to-UART device. On distributions using `/etc/default/gpsd`, `GPSD_OPTIONS="-n"` starts polling without waiting for a client. Restart gpsd and confirm with `gpsmon` or `cgps` that it reports a 3D fix and UTC time. Use a clear view of the sky; a first fix can take several minutes.
+2. **gpsd (if using GNSS).** Install and configure `gpsd` for your distribution. On Debian-based systems, `install.sh` installs the package. Point gpsd at the discovered GNSS device, for example a UART or USB-to-UART device. On distributions using `/etc/default/gpsd`, `GPSD_OPTIONS="-n"` starts polling without waiting for a client. Restart `gpsd` and confirm with `gpsmon` or `cgps` that it reports a 3D fix and UTC time. Use a clear view of the sky; a first fix can take several minutes.
 3. **Meshtastic radio.** Choose the setup matching how the radio connects: a self-contained Meshtastic node with firmware over USB serial, or a supported SPI radio controlled by `meshtasticd`. See [USB/Serial Radios](#usbserial-radios) and [SPI Radios](#spi-radios) below.
 4. **Internet access** to `api.weather.gov`.
 5. **Time zone and config.** Set your `time_zone`, coordinates and NOAA contact information (see Configuration).
@@ -121,7 +121,7 @@ Legend (compact form): `Pt`/`Mstly`/`Cldy`/`Chc`/`Lkly`/`Sct`/`Iso` are Partly/M
     python3 -m venv venv && venv/bin/pip install -r requirements.txt
     venv/bin/python ozo_meshtastic_tw.py --config config.json --once
 
-This is for running from a checkout, with a `config.json` you copied from `config.example.json` in the current directory. For an installed service, see "Install as a service" for the `/opt` and `/etc` paths.
+This is for running from a decompressed release, with a `config.json` you copied from `config.example.json` in the current directory. For an installed service, see "Install as a service" for the `/opt` and `/etc` paths.
 
 Options (mutually exclusive):
 - `--once`: broadcast once and exit. Ignores the schedule and duplicate guard.
@@ -132,7 +132,7 @@ Options (mutually exclusive):
     sudo ./install.sh
 The installer is for Debian-based Linux systems using `apt` and `systemd`. It copies the code, creates a virtual environment and runs `check_radios.py` as the service user before installing the unit. It aborts before installing the unit if the Meshtastic radio cannot be reached, or if GPS is unavailable and both fixed coordinates are not set. A missing GPS is a warning when both coordinates are set. It uses `/etc/ozo-meshtastic-tw/config.json`, created from the example if absent; if a check fails, update that file and re-run the installer. Existing configuration is not overwritten.
 
-The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuration in `/etc/ozo-meshtastic-tw/config.json` (not in `/opt`). A newly installed config is owned by `root:ozo-meshtastic` with mode `0640`. The unit runs as user `ozo-meshtastic`, with primary group `dialout` for serial access and supplementary group `ozo-meshtastic` for config access. `--config` defaults to a `config.json` in the current directory, so pass the installed path explicitly. With the service stopped (the checks open the radio):
+The installed layout is: code and venv in `/opt/ozo-meshtastic-tw`, configuration in `/etc/ozo-meshtastic-tw/config.json`. A newly installed config is owned by `root:ozo-meshtastic` with mode `0640`. The unit runs as user `ozo-meshtastic`, with primary group `dialout` for serial access and supplementary group `ozo-meshtastic` for config access. `--config` defaults to a `config.json` in the current directory, so pass the installed path explicitly. With the service stopped (the checks open the radio):
 
     sudo systemctl stop ozo-meshtastic-tw
     sudo -u ozo-meshtastic /opt/ozo-meshtastic-tw/venv/bin/python /opt/ozo-meshtastic-tw/ozo_meshtastic_tw.py --config /etc/ozo-meshtastic-tw/config.json --check
